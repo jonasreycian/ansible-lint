@@ -112,7 +112,7 @@ def install_collection(collection: str, destination: Optional[str] = None) -> No
         cmd.extend(["-p", destination])
     cmd.append(f"{collection}")
 
-    _logger.warning("Running %s", " ".join(cmd))
+    _logger.info("Running %s", " ".join(cmd))
     run = subprocess.run(
         cmd,
         universal_newlines=True,
