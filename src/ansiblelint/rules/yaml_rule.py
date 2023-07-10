@@ -14,7 +14,6 @@ from ansiblelint.rules import AnsibleLintRule
 from ansiblelint.yaml_utils import load_yamllint_config
 
 if TYPE_CHECKING:
-    from collections.abc import Generator
     from typing import Any
 
     from ansiblelint.errors import MatchError
@@ -34,16 +33,42 @@ class YamllintRule(AnsibleLintRule):
     link = "https://yamllint.readthedocs.io/en/stable/rules.html"
     # ensure this rule runs before most of other common rules
     _order = 1
+    _ids = {
+        "yaml[anchors]": "",
+        "yaml[braces]": "",
+        "yaml[brackets]": "",
+        "yaml[colons]": "",
+        "yaml[commas]": "",
+        "yaml[comments-indentation]": "",
+        "yaml[comments]": "",
+        "yaml[document-end]": "",
+        "yaml[document-start]": "",
+        "yaml[empty-lines]": "",
+        "yaml[empty-values]": "",
+        "yaml[float-values]": "",
+        "yaml[hyphens]": "",
+        "yaml[indentation]": "",
+        "yaml[key-duplicates]": "",
+        "yaml[key-ordering]": "",
+        "yaml[line-length]": "",
+        "yaml[new-line-at-end-of-file]": "",
+        "yaml[new-lines]": "",
+        "yaml[octal-values]": "",
+        "yaml[quoted-strings]": "",
+        "yaml[trailing-spaces]": "",
+        "yaml[truthy]": "",
+    }
 
     def matchyaml(self, file: Lintable) -> list[MatchError]:
         """Return matches found for a specific YAML text."""
         matches: list[MatchError] = []
-        filtered_matches: list[MatchError] = []
         if str(file.base_kind) != "text/yaml":
             return matches
 
         for problem in run_yamllint(
-            file.content, YamllintRule.config, filepath=file.path
+            file.content,
+            YamllintRule.config,
+            filepath=file.path,
         ):
             self.severity = "VERY_LOW"
             if problem.level == "error":
@@ -52,29 +77,13 @@ class YamllintRule(AnsibleLintRule):
                 self.create_matcherror(
                     # yamllint does return lower-case sentences
                     message=problem.desc.capitalize(),
-                    linenumber=problem.line,
+                    lineno=problem.line,
                     details="",
                     filename=file,
                     tag=f"yaml[{problem.rule}]",
-                )
+                ),
             )
-
-        # Now we save inside the file the skips, so they can be removed later,
-        # especially as these skips can be about other rules than yaml one.
-        _fetch_skips(file.data, file.line_skips)
-
-        for match in matches:
-            last_skips = set()
-
-            for line, skips in file.line_skips.items():
-                if line > match.linenumber:
-                    break
-                last_skips = skips
-            if last_skips.intersection({"skip_ansible_lint", match.rule.id, match.tag}):
-                continue
-            filtered_matches.append(match)
-
-        return filtered_matches
+        return matches
 
 
 def _combine_skip_rules(data: Any) -> set[str]:
@@ -98,7 +107,7 @@ def _fetch_skips(data: Any, collector: dict[int, set[str]]) -> dict[int, set[str
             collector[data.get(LINE_NUMBER_KEY)].update(rules)
     if isinstance(data, Iterable) and not isinstance(data, str):
         if isinstance(data, dict):
-            for entry, value in data.items():
+            for _entry, value in data.items():
                 _fetch_skips(value, collector)
         else:  # must be some kind of list
             for entry in data:
@@ -126,7 +135,7 @@ if "pytest" in sys.modules:
     @pytest.mark.parametrize(
         ("file", "expected_kind", "expected"),
         (
-            (
+            pytest.param(
                 "examples/yamllint/invalid.yml",
                 "yaml",
                 [
@@ -134,30 +143,46 @@ if "pytest" in sys.modules:
                     'Duplication of key "foo" in mapping',
                     "Trailing spaces",
                 ],
+                id="invalid",
             ),
-            (
-                "examples/yamllint/valid.yml",
+            pytest.param("examples/yamllint/valid.yml", "yaml", [], id="valid"),
+            pytest.param(
+                "examples/yamllint/line-length.yml",
                 "yaml",
-                [],
+                ["Line too long (166 > 160 characters)"],
+                id="line-length",
             ),
-            (
+            pytest.param(
                 "examples/yamllint/multi-document.yaml",
                 "yaml",
                 [],
+                id="multi-document",
             ),
-            (
+            pytest.param(
                 "examples/yamllint/skipped-rule.yml",
                 "yaml",
                 [],
+                id="skipped-rule",
+            ),
+            pytest.param(
+                "examples/playbooks/rule-yaml-fail.yml",
+                "playbook",
+                [
+                    "Truthy value should be one of [false, true]",
+                    "Truthy value should be one of [false, true]",
+                    "Truthy value should be one of [false, true]",
+                ],
+                id="rule-yaml-fail",
+            ),
+            pytest.param(
+                "examples/playbooks/rule-yaml-pass.yml",
+                "playbook",
+                [],
+                id="rule-yaml-pass",
             ),
         ),
-        ids=(
-            "invalid",
-            "valid",
-            "multi-document",
-            "skipped-rule",
-        ),
     )
+    @pytest.mark.filterwarnings("ignore::ansible_compat.runtime.AnsibleWarning")
     def test_yamllint(file: str, expected_kind: str, expected: list[str]) -> None:
         """Validate parsing of ansible output."""
         lintable = Lintable(file)

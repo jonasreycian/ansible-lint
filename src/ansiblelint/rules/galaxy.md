@@ -20,9 +20,14 @@ This rule can produce messages such:
   equal to `1.0.0`
 - `galaxy[no-changelog]` - collection is missing a changelog file in expected
   locations.
+- `galaxy[no-runtime]` - Please add a
+  [meta/runtime.yml](https://docs.ansible.com/ansible/latest/dev_guide/developing_collections_structure.html#meta-directory-and-runtime-yml)
+  file.
 - `galaxy[tags]` - `galaxy.yaml` must have one of the required tags:
   `application`, `cloud`, `database`, `infrastructure`, `linux`, `monitoring`,
   `networking`, `security`, `storage`, `tools`, `windows`.
+- `galaxy[invalid-dependency-version]` = Invalid collection metadata. Dependency
+  version spec range is invalid
 
 If you want to ignore some of the messages above, you can add any of them to the
 `ignore_list`.

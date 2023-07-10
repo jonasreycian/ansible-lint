@@ -3,13 +3,18 @@ from __future__ import annotations
 
 import logging
 import sys
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ansiblelint.errors import MatchError
 from ansiblelint.file_utils import Lintable
 from ansiblelint.rules import AnsibleLintRule
 from ansiblelint.schemas.__main__ import JSON_SCHEMAS
 from ansiblelint.schemas.main import validate_file_schema
+from ansiblelint.text import has_jinja
+
+if TYPE_CHECKING:
+    from ansiblelint.utils import Task
+
 
 _logger = logging.getLogger(__name__)
 
@@ -33,14 +38,14 @@ pre_checks = {
             "tag": "moves",
         },
         "with_filetree": {
-            "msg": "with_filetree was moved to with_community.general.flattened in 2.10",
+            "msg": "with_filetree was moved to with_community.general.filetree in 2.10",
             "tag": "moves",
         },
         "with_cartesian": {
             "msg": "with_cartesian was moved to with_community.general.flattened in 2.10",
             "tag": "moves",
         },
-    }
+    },
 }
 
 
@@ -53,49 +58,123 @@ class ValidateSchemaRule(AnsibleLintRule):
     severity = "VERY_HIGH"
     tags = ["core"]
     version_added = "v6.1.0"
+    _ids = {
+        "schema[ansible-lint-config]": "",
+        "schema[ansible-navigator-config]": "",
+        "schema[changelog]": "",
+        "schema[execution-environment]": "",
+        "schema[galaxy]": "",
+        "schema[inventory]": "",
+        "schema[meta]": "",
+        "schema[meta-runtime]": "",
+        "schema[molecule]": "",
+        "schema[playbook]": "",
+        "schema[requirements]": "",
+        "schema[role-arg-spec]": "",
+        "schema[rulebook]": "",
+        "schema[tasks]": "",
+        "schema[vars]": "",
+    }
+    _field_checks: dict[str, list[str]] = {}
+
+    @property
+    def field_checks(self) -> dict[str, list[str]]:
+        """Lazy property for returning field checks."""
+        if not self._collection:
+            msg = "Rule was not registered to a RuleCollection."
+            raise RuntimeError(msg)
+        if not self._field_checks:
+            self._field_checks = {
+                "become_method": sorted(
+                    self._collection.app.runtime.plugins.become.keys(),
+                ),
+            }
+        return self._field_checks
+
+    def matchplay(self, file: Lintable, data: dict[str, Any]) -> list[MatchError]:
+        """Return matches found for a specific playbook."""
+        results: list[MatchError] = []
+        if not data or file.kind not in ("tasks", "handlers", "playbook"):
+            return results
+        # check at play level
+        results.extend(self._get_field_matches(file=file, data=data))
+        return results
+
+    def _get_field_matches(
+        self,
+        file: Lintable,
+        data: dict[str, Any],
+    ) -> list[MatchError]:
+        """Retrieve all matches related to fields for the given data block."""
+        results = []
+        for key, values in self.field_checks.items():
+            if key in data:
+                plugin_value = data[key]
+                if not has_jinja(plugin_value) and plugin_value not in values:
+                    msg = f"'{key}' must be one of the currently available values: {', '.join(values)}"
+                    results.append(
+                        MatchError(
+                            message=msg,
+                            lineno=data.get("__line__", 1),
+                            lintable=file,
+                            rule=ValidateSchemaRule(),
+                            details=ValidateSchemaRule.description,
+                            tag=f"schema[{file.kind}]",
+                        ),
+                    )
+        return results
 
     def matchtask(
-        self, task: dict[str, Any], file: Lintable | None = None
+        self,
+        task: Task,
+        file: Lintable | None = None,
     ) -> bool | str | MatchError | list[MatchError]:
-        result = []
+        results = []
+        if not file:
+            file = Lintable("", kind="tasks")
+        results.extend(self._get_field_matches(file=file, data=task.raw_task))
         for key in pre_checks["task"]:
-            if key in task:
+            if key in task.raw_task:
                 msg = pre_checks["task"][key]["msg"]
                 tag = pre_checks["task"][key]["tag"]
-                result.append(
+                results.append(
                     MatchError(
                         message=msg,
-                        filename=file,
+                        lintable=file,
                         rule=ValidateSchemaRule(),
                         details=ValidateSchemaRule.description,
                         tag=f"schema[{tag}]",
-                    )
+                    ),
                 )
-        return result
+        return results
 
     def matchyaml(self, file: Lintable) -> list[MatchError]:
         """Return JSON validation errors found as a list of MatchError(s)."""
-        result = []
+        result: list[MatchError] = []
         if file.kind not in JSON_SCHEMAS:
-            return []
+            return result
 
         errors = validate_file_schema(file)
         if errors:
             if errors[0].startswith("Failed to load YAML file"):
                 _logger.debug(
-                    "Ignored failure to load %s for schema validation, as !vault may cause it."
+                    "Ignored failure to load %s for schema validation, as !vault may cause it.",
+                    file,
                 )
                 return []
 
             result.append(
                 MatchError(
                     message=errors[0],
-                    filename=file,
+                    lintable=file,
                     rule=ValidateSchemaRule(),
                     details=ValidateSchemaRule.description,
                     tag=f"schema[{file.kind}]",
-                )
+                ),
             )
+
+        if not result:
+            result = super().matchyaml(file)
         return result
 
 
@@ -144,7 +223,7 @@ if "pytest" in sys.modules:
             pytest.param(
                 "examples/ee_broken/execution-environment.yml",
                 "execution-environment",
-                ["Additional properties are not allowed ('foo' was unexpected)"],
+                ["{'foo': 'bar'} is not valid under any of the given schemas"],
                 id="execution-environment-broken",
             ),
             ("examples/meta/runtime.yml", "meta-runtime", []),
@@ -198,15 +277,15 @@ if "pytest" in sys.modules:
             ),
             pytest.param(
                 "examples/roles/hello/meta/argument_specs.yml",
-                "arg_specs",
+                "role-arg-spec",
                 [],
-                id="arg_specs",
+                id="role-arg-spec",
             ),
             pytest.param(
                 "examples/roles/broken_argument_specs/meta/argument_specs.yml",
-                "arg_specs",
+                "role-arg-spec",
                 ["Additional properties are not allowed ('foo' was unexpected)"],
-                id="arg_specs-broken",
+                id="role-arg-spec-broken",
             ),
             pytest.param(
                 "examples/changelogs/changelog.yaml",
@@ -218,7 +297,7 @@ if "pytest" in sys.modules:
                 "examples/rulebooks/rulebook-fail.yml",
                 "rulebook",
                 [
-                    "Additional properties are not allowed ('that_should_not_be_here' was unexpected)"
+                    "Additional properties are not allowed ('that_should_not_be_here' was unexpected)",
                 ],
                 id="rulebook",
             ),
@@ -227,6 +306,21 @@ if "pytest" in sys.modules:
                 "rulebook",
                 [],
                 id="rulebook2",
+            ),
+            pytest.param(
+                "examples/playbooks/rule-schema-become-method-pass.yml",
+                "playbook",
+                [],
+                id="playbook",
+            ),
+            pytest.param(
+                "examples/playbooks/rule-schema-become-method-fail.yml",
+                "playbook",
+                [
+                    "'become_method' must be one of the currently available values",
+                    "'become_method' must be one of the currently available values",
+                ],
+                id="playbook2",
             ),
         ),
     )
@@ -258,7 +352,10 @@ if "pytest" in sys.modules:
         ),
     )
     def test_schema_moves(
-        file: str, expected_kind: str, expected_tag: str, count: int
+        file: str,
+        expected_kind: str,
+        expected_tag: str,
+        count: int,
     ) -> None:
         """Validate ability to detect schema[moves]."""
         lintable = Lintable(file)

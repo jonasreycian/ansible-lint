@@ -38,6 +38,25 @@
       "title": "AlpinePlatformModel",
       "type": "object"
     },
+    "AmazonLinuxPlatformModel": {
+      "properties": {
+        "name": {
+          "const": "Amazon Linux",
+          "title": "Name",
+          "type": "string"
+        },
+        "versions": {
+          "default": "all",
+          "items": {
+            "enum": ["all", "1", "2", "2023"],
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "title": "Amazon Linux 2PlatformModel",
+      "type": "object"
+    },
     "AmazonPlatformModel": {
       "properties": {
         "name": {
@@ -70,25 +89,6 @@
         }
       },
       "title": "AmazonPlatformModel",
-      "type": "object"
-    },
-    "Amazon_Linux_2PlatformModel": {
-      "properties": {
-        "name": {
-          "const": "Amazon Linux 2",
-          "title": "Name",
-          "type": "string"
-        },
-        "versions": {
-          "default": "all",
-          "items": {
-            "enum": ["all"],
-            "type": "string"
-          },
-          "type": "array"
-        }
-      },
-      "title": "Amazon Linux 2PlatformModel",
       "type": "object"
     },
     "ArchLinuxPlatformModel": {
@@ -347,6 +347,7 @@
               "35",
               "36",
               "37",
+              "38",
               "all"
             ],
             "type": "string"
@@ -382,6 +383,9 @@
               "12.1",
               "12.2",
               "13.0",
+              "13.1",
+              "13.2",
+              "14.0",
               "8.0",
               "8.1",
               "8.2",
@@ -439,7 +443,8 @@
                 "min_ansible_version",
                 "namespace",
                 "platforms",
-                "role_name"
+                "role_name",
+                "video_links"
               ]
             },
             "required": ["description"]
@@ -454,6 +459,9 @@
         "author": {
           "title": "Author",
           "type": "string"
+        },
+        "cloud_platforms": {
+          "markdownDescription": "Only valid for old standalone roles."
         },
         "company": {
           "title": "Company",
@@ -512,6 +520,10 @@
           "description": "Set to true for old standalone roles, or false for new collection roles.",
           "title": "Standalone",
           "type": "boolean"
+        },
+        "video_links": {
+          "markdownDescription": "Only valid for old standalone roles.",
+          "type": "array"
         }
       },
       "title": "GalaxyInfoModel",
@@ -650,6 +662,36 @@
       "title": "JunosPlatformModel",
       "type": "object"
     },
+    "KaliPlatformModel": {
+      "properties": {
+        "name": {
+          "const": "Kali",
+          "title": "Name",
+          "type": "string"
+        },
+        "versions": {
+          "default": "all",
+          "items": {
+            "enum": [
+              "2.0",
+              "2016",
+              "2017",
+              "2018",
+              "2019",
+              "2020",
+              "2021",
+              "2022",
+              "2023",
+              "all"
+            ],
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "title": "KaliPlatformModel",
+      "type": "object"
+    },
     "MacOSXPlatformModel": {
       "properties": {
         "name": {
@@ -718,6 +760,35 @@
       "title": "NXOSPlatformModel",
       "type": "object"
     },
+    "NetBSDPlatformModel": {
+      "properties": {
+        "name": {
+          "const": "NetBSD",
+          "title": "Name",
+          "type": "string"
+        },
+        "versions": {
+          "default": "all",
+          "items": {
+            "enum": [
+              "8.0",
+              "8.1",
+              "8.2",
+              "9.0",
+              "9.1",
+              "9.2",
+              "9.3",
+              "10.0",
+              "all"
+            ],
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "title": "NetBSDPlatformModel",
+      "type": "object"
+    },
     "OpenBSDPlatformModel": {
       "properties": {
         "name": {
@@ -744,6 +815,9 @@
               "6.8",
               "6.9",
               "7.0",
+              "7.1",
+              "7.2",
+              "7.3",
               "all"
             ],
             "type": "string"
@@ -784,6 +858,16 @@
           "default": "all",
           "items": {
             "enum": [
+              "7.0",
+              "7.1",
+              "7.2",
+              "7.3",
+              "7.4",
+              "7.5",
+              "7.6",
+              "7.7",
+              "7.8",
+              "7.9",
               "8.0",
               "8.1",
               "8.2",
@@ -792,6 +876,7 @@
               "8.5",
               "8.6",
               "8.7",
+              "8.8",
               "9.0",
               "9.1",
               "all"
@@ -1191,7 +1276,7 @@
             "$ref": "#/$defs/AmazonPlatformModel"
           },
           {
-            "$ref": "#/$defs/Amazon_Linux_2PlatformModel"
+            "$ref": "#/$defs/AmazonLinuxPlatformModel"
           },
           {
             "$ref": "#/$defs/aosPlatformModel"
@@ -1204,6 +1289,9 @@
           },
           {
             "$ref": "#/$defs/CumulusPlatformModel"
+          },
+          {
+            "$ref": "#/$defs/NetBSDPlatformModel"
           },
           {
             "$ref": "#/$defs/DebianPlatformModel"
@@ -1249,6 +1337,9 @@
           },
           {
             "$ref": "#/$defs/JunosPlatformModel"
+          },
+          {
+            "$ref": "#/$defs/KaliPlatformModel"
           },
           {
             "$ref": "#/$defs/macOSPlatformModel"

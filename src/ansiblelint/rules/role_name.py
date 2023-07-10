@@ -24,16 +24,18 @@ from __future__ import annotations
 import re
 import sys
 from functools import cache
-from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from ansiblelint.constants import ROLE_IMPORT_ACTION_NAMES
-from ansiblelint.file_utils import Lintable
 from ansiblelint.rules import AnsibleLintRule
 from ansiblelint.utils import parse_yaml_from_file
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from ansiblelint.errors import MatchError
+    from ansiblelint.file_utils import Lintable
+    from ansiblelint.utils import Task
 
 
 ROLE_NAME_REGEX = re.compile(r"^[a-z][a-z0-9_]*$")
@@ -49,7 +51,6 @@ def _match_role_name_regex(role_name: str) -> bool:
 
 
 class RoleNames(AnsibleLintRule):
-    # Unable to use f-strings due to flake8 bug with AST parsing
     """Role name {0} does not match ``^[a-z][a-z0-9_]*$`` pattern."""
 
     id = "role-name"
@@ -61,9 +62,14 @@ class RoleNames(AnsibleLintRule):
     severity = "HIGH"
     tags = ["deprecations", "metadata"]
     version_added = "v6.8.5"
+    _ids = {
+        "role-name[path]": "Avoid using paths when importing roles.",
+    }
 
     def matchtask(
-        self, task: dict[str, Any], file: Lintable | None = None
+        self,
+        task: Task,
+        file: Lintable | None = None,
     ) -> list[MatchError]:
         results = []
         if task["action"]["__ansible_module__"] in ROLE_IMPORT_ACTION_NAMES:
@@ -73,9 +79,9 @@ class RoleNames(AnsibleLintRule):
                     self.create_matcherror(
                         f"Avoid using paths when importing roles. ({name})",
                         filename=file,
-                        linenumber=task["action"].get("__line__", task["__line__"]),
+                        lineno=task["action"].get("__line__", task["__line__"]),
                         tag=f"{self.id}[path]",
-                    )
+                    ),
                 )
         return results
 
@@ -103,19 +109,21 @@ class RoleNames(AnsibleLintRule):
                                 self.create_matcherror(
                                     f"Avoid using paths when importing roles. ({role_name})",
                                     filename=file,
-                                    linenumber=line,
+                                    lineno=line,
                                     tag=f"{self.id}[path]",
-                                )
+                                ),
                             )
             return result
 
         if file.kind == "role":
             role_name = self._infer_role_name(
-                meta=file.path / "meta" / "main.yml", default=file.path.name
+                meta=file.path / "meta" / "main.yml",
+                default=file.path.name,
             )
         else:
             role_name = self._infer_role_name(
-                meta=file.path, default=file.path.resolve().parents[1].name
+                meta=file.path,
+                default=file.path.resolve().parents[1].name,
             )
 
         role_name = _remove_prefix(role_name, "ansible-role-")
@@ -124,7 +132,7 @@ class RoleNames(AnsibleLintRule):
                 self.create_matcherror(
                     filename=file,
                     message=self.shortdesc.format(role_name),
-                )
+                ),
             )
         return result
 
@@ -151,7 +159,9 @@ if "pytest" in sys.modules:
         (pytest.param("examples/playbooks/rule-role-name-path.yml", 3, id="fail"),),
     )
     def test_role_name_path(
-        default_rules_collection: RulesCollection, test_file: str, failure: int
+        default_rules_collection: RulesCollection,
+        test_file: str,
+        failure: int,
     ) -> None:
         """Test rule matches."""
         results = Runner(test_file, rules=default_rules_collection).run()

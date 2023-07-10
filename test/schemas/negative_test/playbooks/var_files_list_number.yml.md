@@ -54,7 +54,25 @@
     "params": {
       "type": "string"
     },
-    "schemaPath": "#/properties/vars_files/items/type"
+    "schemaPath": "#/properties/vars_files/items/oneOf/0/type"
+  },
+  {
+    "instancePath": "/0/vars_files/0",
+    "keyword": "type",
+    "message": "must be array",
+    "params": {
+      "type": "array"
+    },
+    "schemaPath": "#/properties/vars_files/items/oneOf/1/type"
+  },
+  {
+    "instancePath": "/0/vars_files/0",
+    "keyword": "oneOf",
+    "message": "must match exactly one schema in oneOf",
+    "params": {
+      "passingSchemas": null
+    },
+    "schemaPath": "#/properties/vars_files/items/oneOf"
   },
   {
     "instancePath": "/0",
@@ -108,7 +126,15 @@ stdout:
         },
         {
           "path": "$[0].vars_files[0]",
+          "message": "0 is not valid under any of the given schemas"
+        },
+        {
+          "path": "$[0].vars_files[0]",
           "message": "0 is not of type 'string'"
+        },
+        {
+          "path": "$[0].vars_files[0]",
+          "message": "0 is not of type 'array'"
         }
       ]
     }

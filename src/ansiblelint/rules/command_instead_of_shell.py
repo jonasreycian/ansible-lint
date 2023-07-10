@@ -21,102 +21,14 @@
 from __future__ import annotations
 
 import sys
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from ansiblelint.rules import AnsibleLintRule
+from ansiblelint.utils import get_cmd_args
 
 if TYPE_CHECKING:
     from ansiblelint.file_utils import Lintable
-
-
-FAIL_PLAY = """---
-- name: Fixture
-  hosts: localhost
-  tasks:
-  - name: Shell no pipe
-    ansible.builtin.shell:
-      cmd: echo hello
-    changed_when: false
-
-  - name: Shell with jinja filter
-    ansible.builtin.shell:
-      cmd: echo {{ "hello" | upper }}
-    changed_when: false
-
-  - name: Shell with jinja filter (fqcn)
-    ansible.builtin.shell:
-      cmd: echo {{ "hello" | upper }}
-    changed_when: false
-
-  - name: Command with executable parameter
-    ansible.builtin.shell:
-      cmd: clear
-    args:
-      executable: /bin/bash
-    changed_when: false
-"""
-
-SUCCESS_PLAY = """---
-- name: Fixture
-  hosts: localhost
-  tasks:
-  - name: Shell with pipe
-    ansible.builtin.shell:
-      cmd: echo hello | true  # noqa: risky-shell-pipe
-    changed_when: false
-
-  - name: Shell with redirect
-    ansible.builtin.shell:
-      cmd: echo hello >  /tmp/hello
-    changed_when: false
-
-  - name: Chain two shell commands
-    ansible.builtin.shell:
-      cmd: echo hello && echo goodbye
-    changed_when: false
-
-  - name: Run commands in succession
-    ansible.builtin.shell:
-      cmd: echo hello ; echo goodbye
-    changed_when: false
-
-  - name: Use variables
-    ansible.builtin.shell:
-      cmd: echo $HOME $USER
-    changed_when: false
-
-  - name: Use * for globbing
-    ansible.builtin.shell:
-      cmd: ls foo*
-    changed_when: false
-
-  - name: Use ? for globbing
-    ansible.builtin.shell:
-      cmd: ls foo?
-    changed_when: false
-
-  - name: Use [] for globbing
-    ansible.builtin.shell:
-      cmd: ls foo[1,2,3]
-    changed_when: false
-
-  - name: Use shell generator
-    ansible.builtin.shell:
-      cmd: ls foo{.txt,.xml}
-    changed_when: false
-
-  - name: Use backticks
-    ansible.builtin.shell:
-      cmd: ls `ls foo*`
-    changed_when: false
-
-  - name: Use shell with cmd
-    ansible.builtin.shell:
-      cmd: |
-        set -x
-        ls foo?
-    changed_when: false
-"""
+    from ansiblelint.utils import Task
 
 
 class UseCommandInsteadOfShellRule(AnsibleLintRule):
@@ -133,7 +45,9 @@ class UseCommandInsteadOfShellRule(AnsibleLintRule):
     version_added = "historic"
 
     def matchtask(
-        self, task: dict[str, Any], file: Lintable | None = None
+        self,
+        task: Task,
+        file: Lintable | None = None,
     ) -> bool | str:
         # Use unjinja so that we don't match on jinja filters
         # rather than pipes
@@ -144,12 +58,7 @@ class UseCommandInsteadOfShellRule(AnsibleLintRule):
             if "executable" in task["action"]:
                 return False
 
-            if "cmd" in task["action"]:
-                jinja_stripped_cmd = self.unjinja(task["action"].get("cmd", []))
-            else:
-                jinja_stripped_cmd = self.unjinja(
-                    " ".join(task["action"].get("__ansible_arguments__", []))
-                )
+            jinja_stripped_cmd = self.unjinja(get_cmd_args(task))
             return not any(ch in jinja_stripped_cmd for ch in "&|<>;$\n*[]{}?`")
         return False
 
@@ -158,20 +67,31 @@ class UseCommandInsteadOfShellRule(AnsibleLintRule):
 if "pytest" in sys.modules:
     import pytest
 
-    from ansiblelint.testing import RunFromText  # pylint: disable=ungrouped-imports
+    from ansiblelint.rules import RulesCollection  # pylint: disable=ungrouped-imports
+    from ansiblelint.runner import Runner  # pylint: disable=ungrouped-imports
 
     @pytest.mark.parametrize(
-        ("text", "expected"),
+        ("file", "expected"),
         (
-            pytest.param(SUCCESS_PLAY, 0, id="good"),
-            pytest.param(FAIL_PLAY, 3, id="bad"),
+            pytest.param(
+                "examples/playbooks/rule-command-instead-of-shell-pass.yml",
+                0,
+                id="good",
+            ),
+            pytest.param(
+                "examples/playbooks/rule-command-instead-of-shell-fail.yml",
+                3,
+                id="bad",
+            ),
         ),
     )
     def test_rule_command_instead_of_shell(
-        default_text_runner: RunFromText, text: str, expected: int
+        default_rules_collection: RulesCollection,
+        file: str,
+        expected: int,
     ) -> None:
         """Validate that rule works as intended."""
-        results = default_text_runner.run_playbook(text)
+        results = Runner(file, rules=default_rules_collection).run()
         for result in results:
             assert result.rule.id == UseCommandInsteadOfShellRule.id, result
         assert len(results) == expected

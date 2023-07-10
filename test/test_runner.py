@@ -20,41 +20,49 @@
 # THE SOFTWARE.
 from __future__ import annotations
 
-import os
-from typing import Any
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
 from ansiblelint import formatters
-from ansiblelint.file_utils import Lintable, abspath
-from ansiblelint.rules import RulesCollection
+from ansiblelint.file_utils import Lintable
 from ansiblelint.runner import Runner
 
-LOTS_OF_WARNINGS_PLAYBOOK = abspath(
-    "examples/playbooks/lots_of_warnings.yml", os.getcwd()
-)
+if TYPE_CHECKING:
+    from ansiblelint.rules import RulesCollection
+
+LOTS_OF_WARNINGS_PLAYBOOK = Path("examples/playbooks/lots_of_warnings.yml").resolve()
 
 
 @pytest.mark.parametrize(
     ("playbook", "exclude", "length"),
     (
-        pytest.param("examples/playbooks/nomatchestest.yml", [], 0, id="nomatchestest"),
-        pytest.param("examples/playbooks/unicode.yml", [], 1, id="unicode"),
+        pytest.param(
+            Path("examples/playbooks/nomatchestest.yml"),
+            [],
+            0,
+            id="nomatchestest",
+        ),
+        pytest.param(Path("examples/playbooks/unicode.yml"), [], 1, id="unicode"),
         pytest.param(
             LOTS_OF_WARNINGS_PLAYBOOK,
             [LOTS_OF_WARNINGS_PLAYBOOK],
-            0,
+            993,
             id="lots_of_warnings",
         ),
-        pytest.param("examples/playbooks/become.yml", [], 0, id="become"),
+        pytest.param(Path("examples/playbooks/become.yml"), [], 0, id="become"),
         pytest.param(
-            "examples/playbooks/contains_secrets.yml", [], 0, id="contains_secrets"
+            Path("examples/playbooks/contains_secrets.yml"),
+            [],
+            0,
+            id="contains_secrets",
         ),
     ),
 )
 def test_runner(
     default_rules_collection: RulesCollection,
-    playbook: str,
+    playbook: Path,
     exclude: list[str],
     length: int,
 ) -> None:
@@ -69,9 +77,9 @@ def test_runner(
 def test_runner_exclude_paths(default_rules_collection: RulesCollection) -> None:
     """Test that exclude paths do work."""
     runner = Runner(
-        "examples/playbooks/example.yml",
+        "examples/playbooks/deep/",
         rules=default_rules_collection,
-        exclude_paths=["examples/"],
+        exclude_paths=["examples/playbooks/deep/empty.yml"],
     )
 
     matches = runner.run()
@@ -80,7 +88,8 @@ def test_runner_exclude_paths(default_rules_collection: RulesCollection) -> None
 
 @pytest.mark.parametrize(("exclude_path"), ("**/playbooks/*.yml",))
 def test_runner_exclude_globs(
-    default_rules_collection: RulesCollection, exclude_path: str
+    default_rules_collection: RulesCollection,
+    exclude_path: str,
 ) -> None:
     """Test that globs work."""
     runner = Runner(
@@ -90,7 +99,7 @@ def test_runner_exclude_globs(
     )
 
     matches = runner.run()
-    # we expect to find one error from the only .yaml file we have there.
+    # we expect to find one match from the very few .yaml file we have there (most of them have .yml extension)
     assert len(matches) == 1
 
 
@@ -108,7 +117,7 @@ def test_runner_unicode_format(
     formatter_cls: type[formatters.BaseFormatter[Any]],
 ) -> None:
     """Check that all formatters are unicode-friendly."""
-    formatter = formatter_cls(os.getcwd(), display_relative_path=True)
+    formatter = formatter_cls(Path.cwd(), display_relative_path=True)
     runner = Runner(
         Lintable("examples/playbooks/unicode.yml", kind="playbook"),
         rules=default_rules_collection,
@@ -116,12 +125,19 @@ def test_runner_unicode_format(
 
     matches = runner.run()
 
-    formatter.format(matches[0])
+    formatter.apply(matches[0])
 
 
-@pytest.mark.parametrize("directory_name", ("test/", os.path.abspath("test")))
+@pytest.mark.parametrize(
+    "directory_name",
+    (
+        pytest.param(Path("test/fixtures/verbosity-tests"), id="rel"),
+        pytest.param(Path("test/fixtures/verbosity-tests").resolve(), id="abs"),
+    ),
+)
 def test_runner_with_directory(
-    default_rules_collection: RulesCollection, directory_name: str
+    default_rules_collection: RulesCollection,
+    directory_name: Path,
 ) -> None:
     """Check that runner detects a directory as role."""
     runner = Runner(directory_name, rules=default_rules_collection)
@@ -134,7 +150,7 @@ def test_files_not_scanned_twice(default_rules_collection: RulesCollection) -> N
     """Ensure that lintables aren't double-checked."""
     checked_files: set[Lintable] = set()
 
-    filename = os.path.abspath("examples/playbooks/common-include-1.yml")
+    filename = Path("examples/playbooks/common-include-1.yml").resolve()
     runner = Runner(
         filename,
         rules=default_rules_collection,
@@ -145,9 +161,9 @@ def test_files_not_scanned_twice(default_rules_collection: RulesCollection) -> N
     assert len(runner.checked_files) == 2
     assert len(run1) == 1
 
-    filename = os.path.abspath("examples/playbooks/common-include-2.yml")
+    filename = Path("examples/playbooks/common-include-2.yml").resolve()
     runner = Runner(
-        filename,
+        str(filename),
         rules=default_rules_collection,
         verbosity=0,
         checked_files=checked_files,
@@ -157,3 +173,38 @@ def test_files_not_scanned_twice(default_rules_collection: RulesCollection) -> N
     # this second run should return 0 because the included filed was already
     # processed and added to checked_files, which acts like a bypass list.
     assert len(run2) == 0
+
+
+def test_runner_not_found(default_rules_collection: RulesCollection) -> None:
+    """Ensure that lintables aren't double-checked."""
+    checked_files: set[Lintable] = set()
+
+    filename = Path("this/folder/does/not/exist").resolve()
+    runner = Runner(
+        filename,
+        rules=default_rules_collection,
+        verbosity=0,
+        checked_files=checked_files,
+    )
+    result = runner.run()
+    assert len(runner.checked_files) == 1
+    assert len(result) == 1
+    assert result[0].tag == "load-failure[not-found]"
+
+
+def test_runner_tmp_file(
+    tmp_path: Path,
+    default_rules_collection: RulesCollection,
+) -> None:
+    """Ensure we do not ignore an explicit temporary file from linting."""
+    # https://github.com/ansible/ansible-lint/issues/2628
+    filename = tmp_path / "playbook.yml"
+    filename.write_text("---\n")
+    runner = Runner(
+        filename,
+        rules=default_rules_collection,
+        verbosity=0,
+    )
+    result = runner.run()
+    assert len(result) == 1
+    assert result[0].tag == "syntax-check[empty-playbook]"

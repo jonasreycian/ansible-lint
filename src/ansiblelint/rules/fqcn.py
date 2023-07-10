@@ -3,19 +3,24 @@ from __future__ import annotations
 
 import logging
 import sys
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ansible.plugins.loader import module_loader
 
 from ansiblelint.constants import LINE_NUMBER_KEY
-from ansiblelint.errors import MatchError
-from ansiblelint.file_utils import Lintable
-from ansiblelint.rules import AnsibleLintRule, RulesCollection
+from ansiblelint.rules import AnsibleLintRule, TransformMixin
+
+if TYPE_CHECKING:
+    from ruamel.yaml.comments import CommentedMap, CommentedSeq
+
+    from ansiblelint.errors import MatchError
+    from ansiblelint.file_utils import Lintable
+    from ansiblelint.utils import Task
+
 
 _logger = logging.getLogger(__name__)
 
 builtins = [
-    # spell-checker:disable
     "add_host",
     "apt",
     "apt_key",
@@ -84,11 +89,10 @@ builtins = [
     "wait_for_connection",
     "yum",
     "yum_repository",
-    # spell-checker:enable
 ]
 
 
-class FQCNBuiltinsRule(AnsibleLintRule):
+class FQCNBuiltinsRule(AnsibleLintRule, TransformMixin):
     """Use FQCN for builtin actions."""
 
     id = "fqcn"
@@ -99,9 +103,16 @@ class FQCNBuiltinsRule(AnsibleLintRule):
     tags = ["formatting"]
     version_added = "v6.8.0"
     module_aliases: dict[str, str] = {"block/always/rescue": "block/always/rescue"}
+    _ids = {
+        "fqcn[action-core]": "Use FQCN for builtin module actions",
+        "fqcn[action]": "Use FQCN for module actions",
+        "fqcn[canonical]": "You should use canonical module name",
+    }
 
     def matchtask(
-        self, task: dict[str, Any], file: Lintable | None = None
+        self,
+        task: Task,
+        file: Lintable | None = None,
     ) -> list[MatchError]:
         result = []
         module = task["action"]["__ansible_module_original__"]
@@ -121,7 +132,9 @@ class FQCNBuiltinsRule(AnsibleLintRule):
             module_alias = self.module_aliases[module]
             if module_alias.startswith("ansible.builtin"):
                 legacy_module = module_alias.replace(
-                    "ansible.builtin.", "ansible.legacy.", 1
+                    "ansible.builtin.",
+                    "ansible.legacy.",
+                    1,
                 )
                 if module != legacy_module:
                     result.append(
@@ -129,9 +142,9 @@ class FQCNBuiltinsRule(AnsibleLintRule):
                             message=f"Use FQCN for builtin module actions ({module}).",
                             details=f"Use `{module_alias}` or `{legacy_module}` instead.",
                             filename=file,
-                            linenumber=task["__line__"],
+                            lineno=task["__line__"],
                             tag="fqcn[action-core]",
-                        )
+                        ),
                     )
             else:
                 if module.count(".") < 2:
@@ -140,24 +153,47 @@ class FQCNBuiltinsRule(AnsibleLintRule):
                             message=f"Use FQCN for module actions, such `{self.module_aliases[module]}`.",
                             details=f"Action `{module}` is not FQCN.",
                             filename=file,
-                            linenumber=task["__line__"],
+                            lineno=task["__line__"],
                             tag="fqcn[action]",
-                        )
+                        ),
                     )
-                # TODO(ssbarnea): Remove the c.g. and c.n. exceptions from here once
+                # TODO(ssbarnea): Remove the c.g. and c.n. exceptions from here once # noqa: FIX002
                 # community team is flattening these.
-                # See: https://github.com/ansible-community/community-topics/issues/147
+                # https://github.com/ansible-community/community-topics/issues/147
                 elif not module.startswith("community.general.") or module.startswith(
-                    "community.network."
+                    "community.network.",
                 ):
                     result.append(
                         self.create_matcherror(
                             message=f"You should use canonical module name `{self.module_aliases[module]}` instead of `{module}`.",
                             filename=file,
-                            linenumber=task["__line__"],
+                            lineno=task["__line__"],
                             tag="fqcn[canonical]",
-                        )
+                        ),
                     )
+        return result
+
+    def matchyaml(self, file: Lintable) -> list[MatchError]:
+        """Return matches found for a specific YAML text."""
+        result = []
+        if file.kind == "plugin":
+            i = file.path.resolve().parts.index("plugins")
+            plugin_type = file.path.resolve().parts[i : i + 2]
+            short_path = file.path.resolve().parts[i + 2 :]
+            if len(short_path) > 1:
+                result.append(
+                    self.create_matcherror(
+                        message=f"Deep plugins directory is discouraged. Move '{file.path}' directly under '{'/'.join(plugin_type)}' folder.",
+                        tag="fqcn[deep]",
+                        filename=file,
+                    ),
+                )
+        elif file.kind == "playbook":
+            for play in file.data:
+                if play is None:
+                    continue
+
+                result.extend(self.matchplay(file, play))
         return result
 
     def matchplay(self, file: Lintable, data: dict[str, Any]) -> list[MatchError]:
@@ -167,16 +203,44 @@ class FQCNBuiltinsRule(AnsibleLintRule):
             return [
                 self.create_matcherror(
                     message="Avoid `collections` keyword by using FQCN for all plugins, modules, roles and playbooks.",
-                    linenumber=data[LINE_NUMBER_KEY],
+                    lineno=data[LINE_NUMBER_KEY],
                     tag="fqcn[keyword]",
                     filename=file,
-                )
+                ),
             ]
         return []
+
+    def transform(
+        self,
+        match: MatchError,
+        lintable: Lintable,
+        data: CommentedMap | CommentedSeq | str,
+    ) -> None:
+        if match.tag in self.ids():
+            target_task = self.seek(match.yaml_path, data)
+            # Unfortunately, a lot of data about Ansible content gets lost here, you only get a simple dict.
+            # For now, just parse the error messages for the data about action names etc. and fix this later.
+            if match.tag == "fqcn[action-core]":
+                # split at the first bracket, cut off the last bracket and dot
+                current_action = match.message.split("(")[1][:-2]
+                # This will always replace builtin modules with "ansible.builtin" versions, not "ansible.legacy".
+                # The latter is technically more correct in what ansible has executed so far, the former is most likely better understood and more robust.
+                new_action = match.details.split("`")[1]
+            elif match.tag == "fqcn[action]":
+                current_action = match.details.split("`")[1]
+                new_action = match.message.split("`")[1]
+            elif match.tag == "fqcn[canonical]":
+                current_action = match.message.split("`")[3]
+                new_action = match.message.split("`")[1]
+            for _ in range(len(target_task)):
+                k, v = target_task.popitem(False)
+                target_task[new_action if k == current_action else k] = v
+            match.fixed = True
 
 
 # testing code to be loaded only with pytest or when executed the rule file
 if "pytest" in sys.modules:
+    from ansiblelint.rules import RulesCollection
     from ansiblelint.runner import Runner  # pylint: disable=ungrouped-imports
 
     def test_fqcn_builtin_fail() -> None:
@@ -200,3 +264,21 @@ if "pytest" in sys.modules:
         success = "examples/playbooks/rule-fqcn-pass.yml"
         results = Runner(success, rules=collection).run()
         assert len(results) == 0, results
+
+    def test_fqcn_deep_fail() -> None:
+        """Test rule matches."""
+        collection = RulesCollection()
+        collection.register(FQCNBuiltinsRule())
+        failure = "examples/collection/plugins/modules/deep/beta.py"
+        results = Runner(failure, rules=collection).run()
+        assert len(results) == 1
+        assert results[0].tag == "fqcn[deep]"
+        assert "Deep plugins directory is discouraged" in results[0].message
+
+    def test_fqcn_deep_pass() -> None:
+        """Test rule does not match."""
+        collection = RulesCollection()
+        collection.register(FQCNBuiltinsRule())
+        success = "examples/collection/plugins/modules/alpha.py"
+        results = Runner(success, rules=collection).run()
+        assert len(results) == 0

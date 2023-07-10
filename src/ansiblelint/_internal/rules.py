@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from ansiblelint.errors import MatchError
     from ansiblelint.file_utils import Lintable
     from ansiblelint.rules import RulesCollection
+    from ansiblelint.utils import Task
 
 _logger = logging.getLogger(__name__)
 LOAD_FAILURE_MD = """\
@@ -53,7 +54,7 @@ class BaseRule:
     _collection: RulesCollection | None = None
 
     @property
-    def help(self) -> str:
+    def help(self) -> str:  # noqa: A003
         """Return a help markdown string for the rule."""
         if self._help is None:
             self._help = ""
@@ -87,7 +88,7 @@ class BaseRule:
             for method in [self.matchlines, self.matchtasks, self.matchyaml]:
                 try:
                     matches.extend(method(file))
-                except Exception as exc:  # pylint: disable=broad-except
+                except Exception as exc:  # pylint: disable=broad-except # noqa: BLE001
                     _logger.warning(
                         "Ignored exception from %s.%s while processing %s: %s",
                         self.__class__.__name__,
@@ -104,7 +105,9 @@ class BaseRule:
         return []
 
     def matchtask(
-        self, task: dict[str, Any], file: Lintable | None = None
+        self,
+        task: Task,
+        file: Lintable | None = None,
     ) -> bool | str | MatchError | list[MatchError]:
         """Confirm if current rule is matching a specific task.
 
@@ -146,6 +149,14 @@ class BaseRule:
         """Return a AnsibleLintRule instance representation."""
         return self.id + ": " + self.shortdesc
 
+    @classmethod
+    def ids(cls) -> dict[str, str]:
+        """Return a dictionary ids and their messages.
+
+        This is used by the ``--list-tags`` option to ansible-lint.
+        """
+        return getattr(cls, "_ids", {cls.id: cls.shortdesc})
+
 
 # pylint: enable=unused-argument
 
@@ -154,6 +165,7 @@ class RuntimeErrorRule(BaseRule):
     """Unexpected internal error."""
 
     id = "internal-error"
+    shortdesc = "Unexpected internal error"
     severity = "VERY_HIGH"
     tags = ["core"]
     version_added = "v5.0.0"
@@ -179,8 +191,11 @@ class LoadingFailureRule(BaseRule):
     severity = "VERY_HIGH"
     tags = ["core", "unskippable"]
     version_added = "v4.3.0"
-    help = LOAD_FAILURE_MD
+    _help = LOAD_FAILURE_MD
     _order = 0
+    _ids = {
+        "load-failure[not-found]": "File not found",
+    }
 
 
 class WarningRule(BaseRule):

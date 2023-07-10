@@ -9,7 +9,7 @@ import logging
 import re
 import sys
 from functools import lru_cache
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 # pylint: disable=preferred-module
 from unittest import mock
@@ -18,22 +18,33 @@ from unittest.mock import patch
 # pylint: disable=reimported
 import ansible.module_utils.basic as mock_ansible_module
 from ansible.module_utils import basic
-from ansible.plugins import loader
+from ansible.plugins.loader import PluginLoadContext, module_loader
 
 from ansiblelint.constants import LINE_NUMBER_KEY
-from ansiblelint.errors import MatchError
-from ansiblelint.file_utils import Lintable
 from ansiblelint.rules import AnsibleLintRule, RulesCollection
 from ansiblelint.text import has_jinja
 from ansiblelint.yaml_utils import clean_json
 
+if TYPE_CHECKING:
+    from ansiblelint.errors import MatchError
+    from ansiblelint.file_utils import Lintable
+    from ansiblelint.utils import Task
+
+
 _logger = logging.getLogger(__name__)
 
 ignored_re = re.compile(
-    "|".join(
+    "|".join(  # noqa: FLY002
         [
             r"^parameters are mutually exclusive:",
-        ]
+            # https://github.com/ansible/ansible-lint/issues/3128 as strings can be jinja
+            # Do not remove unless you manually test if the original example
+            # from the bug does not trigger the rule anymore. We were not able
+            # to add a regression test because it would involve installing this
+            # collection. Attempts to reproduce same bug with other collections
+            # failed, even if the message originates from Ansible core.
+            r"^unable to evaluate string as dictionary$",
+        ],
     ),
     flags=re.MULTILINE | re.DOTALL,
 )
@@ -42,33 +53,36 @@ workarounds_drop_map = {
     # https://github.com/ansible/ansible-lint/issues/3110
     "ansible.builtin.copy": ["decrypt"],
     # https://github.com/ansible/ansible-lint/issues/2824#issuecomment-1354337466
-    "ansible.builtin.service": ["daemon_reload"],
+    # https://github.com/ansible/ansible-lint/issues/3138
+    "ansible.builtin.service": ["daemon_reload", "use"],
     # Avoid: Unsupported parameters for (basic.py) module: cmd. Supported parameters include: _raw_params, _uses_shell, argv, chdir, creates, executable, removes, stdin, stdin_add_newline, strip_empty_ends.
     "ansible.builtin.command": ["cmd"],
+    # https://github.com/ansible/ansible-lint/issues/3152
+    "ansible.posix.synchronize": ["use_ssh_args"],
 }
 workarounds_inject_map = {
     # https://github.com/ansible/ansible-lint/issues/2824
-    "ansible.builtin.async_status": {"_async_dir": "/tmp/ansible-async"}
+    "ansible.builtin.async_status": {"_async_dir": "/tmp/ansible-async"},
 }
 
 
 @lru_cache
-def load_module(module_name: str) -> loader.PluginLoadContext:
+def load_module(module_name: str) -> PluginLoadContext:
     """Load plugin from module name and cache it."""
-    return loader.module_loader.find_plugin_with_context(module_name)
+    return module_loader.find_plugin_with_context(module_name)
 
 
-class ValidationPassed(Exception):
+class ValidationPassedError(Exception):
     """Exception to be raised when validation passes."""
 
 
-class CustomAnsibleModule(basic.AnsibleModule):  # type: ignore
+class CustomAnsibleModule(basic.AnsibleModule):  # type: ignore[misc]
     """Mock AnsibleModule class."""
 
     def __init__(self, *args: str, **kwargs: str) -> None:
         """Initialize AnsibleModule mock."""
         super().__init__(*args, **kwargs)
-        raise ValidationPassed
+        raise ValidationPassedError
 
 
 class ArgsRule(AnsibleLintRule):
@@ -80,11 +94,16 @@ class ArgsRule(AnsibleLintRule):
     tags = ["syntax", "experimental"]
     version_added = "v6.10.0"
     module_aliases: dict[str, str] = {"block/always/rescue": "block/always/rescue"}
+    _ids = {
+        "args[module]": description,
+    }
 
     def matchtask(
-        self, task: dict[str, Any], file: Lintable | None = None
+        self,
+        task: Task,
+        file: Lintable | None = None,
     ) -> list[MatchError]:
-        # pylint: disable=too-many-branches,too-many-locals
+        # pylint: disable=too-many-locals,too-many-return-statements
         results: list[MatchError] = []
         module_name = task["action"]["__ansible_module_original__"]
         failed_msg = None
@@ -93,11 +112,31 @@ class ArgsRule(AnsibleLintRule):
             return []
 
         loaded_module = load_module(module_name)
+
+        # https://github.com/ansible/ansible-lint/issues/3200
+        # since "ps1" modules cannot be executed on POSIX platforms, we will
+        # avoid running this rule for such modules
+        if isinstance(
+            loaded_module.plugin_resolved_path,
+            str,
+        ) and loaded_module.plugin_resolved_path.endswith(".ps1"):
+            return []
+
         module_args = {
             key: value
             for key, value in task["action"].items()
             if not key.startswith("__")
         }
+
+        # Return if 'args' is jinja string
+        # https://github.com/ansible/ansible-lint/issues/3199
+        if (
+            "args" in task.raw_task
+            and isinstance(task.raw_task["args"], str)
+            and has_jinja(task.raw_task["args"])
+        ):
+            return []
+
         if loaded_module.resolved_fqcn in workarounds_inject_map:
             module_args.update(workarounds_inject_map[loaded_module.resolved_fqcn])
         if loaded_module.resolved_fqcn in workarounds_drop_map:
@@ -106,7 +145,9 @@ class ArgsRule(AnsibleLintRule):
                     del module_args[key]
 
         with mock.patch.object(
-            mock_ansible_module, "AnsibleModule", CustomAnsibleModule
+            mock_ansible_module,
+            "AnsibleModule",
+            CustomAnsibleModule,
         ):
             spec = importlib.util.spec_from_file_location(
                 name=loaded_module.resolved_fqcn,
@@ -144,24 +185,26 @@ class ArgsRule(AnsibleLintRule):
                     # as what happens may be very hard to debug.
                     with contextlib.redirect_stdout(fio):
                         # pylint: disable=protected-access
-                        basic._ANSIBLE_ARGS = None
+                        basic._ANSIBLE_ARGS = None  # noqa: SLF001
                         try:
                             module.main()
                         except SystemExit:
                             failed_msg = fio.getvalue()
                     if failed_msg:
                         results.extend(
-                            self._parse_failed_msg(failed_msg, task, module_name, file)
+                            self._parse_failed_msg(failed_msg, task, module_name, file),
                         )
 
                 sanitized_results = self._sanitize_results(results, module_name)
                 return sanitized_results
-            except ValidationPassed:
+            except ValidationPassedError:
                 return []
 
     # pylint: disable=unused-argument
     def _sanitize_results(
-        self, results: list[MatchError], module_name: str
+        self,
+        results: list[MatchError],
+        module_name: str,
     ) -> list[MatchError]:
         """Remove results that are false positive."""
         sanitized_results = []
@@ -189,7 +232,8 @@ class ArgsRule(AnsibleLintRule):
             error_message = failed_msg
 
         option_type_check_error = re.search(
-            r"argument '(?P<name>.*)' is of type", error_message
+            r"argument '(?P<name>.*)' is of type",
+            error_message,
         )
         if option_type_check_error:
             # ignore options with templated variable value with type check errors
@@ -205,7 +249,8 @@ class ArgsRule(AnsibleLintRule):
                 return results
 
         value_not_in_choices_error = re.search(
-            r"value of (?P<name>.*) must be one of:", error_message
+            r"value of (?P<name>.*) must be one of:",
+            error_message,
         )
         if value_not_in_choices_error:
             # ignore templated value not in allowed choices
@@ -223,24 +268,24 @@ class ArgsRule(AnsibleLintRule):
         results.append(
             self.create_matcherror(
                 message=error_message,
-                linenumber=task[LINE_NUMBER_KEY],
+                lineno=task[LINE_NUMBER_KEY],
                 tag="args[module]",
                 filename=file,
-            )
+            ),
         )
         return results
 
 
 # testing code to be loaded only with pytest or when executed the rule file
 if "pytest" in sys.modules:
+    import pytest  # noqa: TCH002
+
     from ansiblelint.runner import Runner  # pylint: disable=ungrouped-imports
 
-    def test_args_module_fail() -> None:
+    def test_args_module_fail(default_rules_collection: RulesCollection) -> None:
         """Test rule invalid module options."""
-        collection = RulesCollection()
-        collection.register(ArgsRule())
         success = "examples/playbooks/rule-args-module-fail.yml"
-        results = Runner(success, rules=collection).run()
+        results = Runner(success, rules=default_rules_collection).run()
         assert len(results) == 5
         assert results[0].tag == "args[module]"
         assert "missing required arguments" in results[0].message
@@ -249,14 +294,17 @@ if "pytest" in sys.modules:
         assert results[2].tag == "args[module]"
         assert "Unsupported parameters for" in results[2].message
         assert results[3].tag == "args[module]"
-        assert "Unsupported parameters for" in results[2].message
+        assert "Unsupported parameters for" in results[3].message
         assert results[4].tag == "args[module]"
         assert "value of state must be one of" in results[4].message
 
-    def test_args_module_pass() -> None:
+    def test_args_module_pass(
+        default_rules_collection: RulesCollection,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
         """Test rule valid module options."""
-        collection = RulesCollection()
-        collection.register(ArgsRule())
         success = "examples/playbooks/rule-args-module-pass.yml"
-        results = Runner(success, rules=collection).run()
+        with caplog.at_level(logging.WARNING):
+            results = Runner(success, rules=default_rules_collection).run()
         assert len(results) == 0, results
+        assert len(caplog.records) == 0, caplog.records

@@ -35,23 +35,23 @@ class TestSarifFormatter:
         self.matches.append(
             MatchError(
                 message="message",
-                linenumber=1,
+                lineno=1,
                 column=10,
-                details="hello",
-                filename=Lintable("filename.yml", content=""),
+                details="details",
+                lintable=Lintable("filename.yml", content=""),
                 rule=self.rule,
                 tag="yaml[test]",
-            )
+            ),
         )
         self.matches.append(
             MatchError(
                 message="message",
-                linenumber=2,
-                details="hello",
-                filename=Lintable("filename.yml", content=""),
+                lineno=2,
+                details="",
+                lintable=Lintable("filename.yml", content=""),
                 rule=self.rule,
                 tag="yaml[test]",
-            )
+            ),
         )
         self.formatter = SarifFormatter(pathlib.Path.cwd(), display_relative_path=True)
 
@@ -63,13 +63,16 @@ class TestSarifFormatter:
     def test_result_is_json(self) -> None:
         """Test if returned string value is a JSON."""
         assert isinstance(self.formatter, SarifFormatter)
-        json.loads(self.formatter.format_result(self.matches))
+        output = self.formatter.format_result(self.matches)
+        json.loads(output)
+        # https://github.com/ansible/ansible-navigator/issues/1490
+        assert "\n" not in output
 
     def test_single_match(self) -> None:
-        """Test negative case. Only lists are allowed. Otherwise a RuntimeError will be raised."""
+        """Test negative case. Only lists are allowed. Otherwise, a RuntimeError will be raised."""
         assert isinstance(self.formatter, SarifFormatter)
         with pytest.raises(RuntimeError):
-            self.formatter.format_result(self.matches[0])  # type: ignore
+            self.formatter.format_result(self.matches[0])  # type: ignore[arg-type]
 
     def test_result_is_list(self) -> None:
         """Test if the return SARIF object contains the results with length of 2."""
@@ -94,12 +97,11 @@ class TestSarifFormatter:
         assert rules[0]["defaultConfiguration"]["level"] == "error"
         assert rules[0]["help"]["text"] == self.matches[0].rule.description
         assert rules[0]["properties"]["tags"] == self.matches[0].rule.tags
-        assert rules[0]["helpUri"] == self.rule.link
+        assert rules[0]["helpUri"] == self.matches[0].rule.url
         results = sarif["runs"][0]["results"]
         assert len(results) == 2
         for i, result in enumerate(results):
             assert result["ruleId"] == self.matches[i].tag
-            assert result["message"]["text"] == self.matches[0].message
             assert (
                 result["locations"][0]["physicalLocation"]["artifactLocation"]["uri"]
                 == self.matches[i].filename
@@ -112,7 +114,7 @@ class TestSarifFormatter:
             )
             assert (
                 result["locations"][0]["physicalLocation"]["region"]["startLine"]
-                == self.matches[i].linenumber
+                == self.matches[i].lineno
             )
             if self.matches[i].column:
                 assert (
@@ -125,6 +127,8 @@ class TestSarifFormatter:
                     not in result["locations"][0]["physicalLocation"]["region"]
                 )
         assert sarif["runs"][0]["originalUriBaseIds"][SarifFormatter.BASE_URI_ID]["uri"]
+        assert results[0]["message"]["text"] == self.matches[0].details
+        assert results[1]["message"]["text"] == self.matches[1].message
 
 
 def test_sarif_parsable_ignored() -> None:
@@ -163,5 +167,26 @@ def test_sarif_file(file: str, return_code: int) -> None:
         ]
         result = subprocess.run([*cmd, file], check=False, capture_output=True)
         assert result.returncode == return_code
-        assert os.path.exists(output_file.name)
+        assert os.path.exists(output_file.name)  # noqa: PTH110
         assert os.path.getsize(output_file.name) > 0
+
+
+@pytest.mark.parametrize(
+    ("file", "return_code"),
+    (pytest.param("examples/playbooks/valid.yml", 0),),
+)
+def test_sarif_file_creates_it_if_none_exists(file: str, return_code: int) -> None:
+    """Test ability to create sarif file if none exists and dump output to it (--sarif-file)."""
+    sarif_file_name = "test_output.sarif"
+    cmd = [
+        sys.executable,
+        "-m",
+        "ansiblelint",
+        "--sarif-file",
+        sarif_file_name,
+    ]
+    result = subprocess.run([*cmd, file], check=False, capture_output=True)
+    assert result.returncode == return_code
+    assert os.path.exists(sarif_file_name)  # noqa: PTH110
+    assert os.path.getsize(sarif_file_name) > 0
+    pathlib.Path.unlink(pathlib.Path(sarif_file_name))

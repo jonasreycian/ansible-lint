@@ -4,13 +4,14 @@
 from __future__ import annotations
 
 import sys
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from ansiblelint.rules import AnsibleLintRule
 from ansiblelint.yaml_utils import nested_items_path
 
 if TYPE_CHECKING:
     from ansiblelint.file_utils import Lintable
+    from ansiblelint.utils import Task
 
 
 class NoTabsRule(AnsibleLintRule):
@@ -37,7 +38,9 @@ class NoTabsRule(AnsibleLintRule):
     ]
 
     def matchtask(
-        self, task: dict[str, Any], file: Lintable | None = None
+        self,
+        task: Task,
+        file: Lintable | None = None,
     ) -> bool | str:
         action = task["action"]["__ansible_module__"]
         for k, v, _ in nested_items_path(task):
@@ -56,8 +59,9 @@ if "pytest" in sys.modules:
     def test_no_tabs_rule(default_rules_collection: RulesCollection) -> None:
         """Test rule matches."""
         results = Runner(
-            "examples/playbooks/rule-no-tabs.yml", rules=default_rules_collection
+            "examples/playbooks/rule-no-tabs.yml",
+            rules=default_rules_collection,
         ).run()
-        assert results[0].linenumber == 10
+        assert results[0].lineno == 10
         assert results[0].message == NoTabsRule().shortdesc
         assert len(results) == 2

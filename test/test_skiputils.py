@@ -8,15 +8,18 @@ import pytest
 
 from ansiblelint.constants import SKIPPED_RULES_KEY
 from ansiblelint.file_utils import Lintable
+from ansiblelint.runner import Runner
 from ansiblelint.skip_utils import (
     append_skipped_rules,
     get_rule_skips_from_line,
     is_nested_task,
 )
-from ansiblelint.testing import RunFromText
 
 if TYPE_CHECKING:
     from ansible.parsing.yaml.objects import AnsibleBaseYAMLObject
+
+    from ansiblelint.rules import RulesCollection
+    from ansiblelint.testing import RunFromText
 
 PLAYBOOK_WITH_NOQA = """\
 ---
@@ -42,7 +45,7 @@ PLAYBOOK_WITH_NOQA = """\
 )
 def test_get_rule_skips_from_line(line: str, expected: str) -> None:
     """Validate get_rule_skips_from_line."""
-    v = get_rule_skips_from_line(line)
+    v = get_rule_skips_from_line(line, lintable=Lintable(""))
     assert v == [expected]
 
 
@@ -75,11 +78,11 @@ def test_playbook_noqa2(default_text_runner: RunFromText) -> None:
                             "git": "src=/path/to/git/repo dest=checkout",
                             "__line__": 4,
                             "__file__": Path("examples/playbooks/noqa.yml"),
-                        }
+                        },
                     ],
                     "__line__": 2,
                     "__file__": Path("examples/playbooks/noqa.yml"),
-                }
+                },
             ],
             [
                 {
@@ -92,11 +95,11 @@ def test_playbook_noqa2(default_text_runner: RunFromText) -> None:
                             "__line__": 4,
                             "__file__": Path("examples/playbooks/noqa.yml"),
                             SKIPPED_RULES_KEY: ["latest[git]", "partial-become"],
-                        }
+                        },
                     ],
                     "__line__": 2,
                     "__file__": Path("examples/playbooks/noqa.yml"),
-                }
+                },
             ],
         ),
         pytest.param(
@@ -116,28 +119,28 @@ def test_playbook_noqa2(default_text_runner: RunFromText) -> None:
                                                 "msg": "Test unnamed task in block",
                                                 "__line__": 9,
                                                 "__file__": Path(
-                                                    "examples/playbooks/noqa-nested.yml"
+                                                    "examples/playbooks/noqa-nested.yml",
                                                 ),
                                             },
                                             "__line__": 8,
                                             "__file__": Path(
-                                                "examples/playbooks/noqa-nested.yml"
+                                                "examples/playbooks/noqa-nested.yml",
                                             ),
-                                        }
+                                        },
                                     ],
                                     "__line__": 6,
                                     "__file__": Path(
-                                        "examples/playbooks/noqa-nested.yml"
+                                        "examples/playbooks/noqa-nested.yml",
                                     ),
-                                }
+                                },
                             ],
                             "__line__": 4,
                             "__file__": Path("examples/playbooks/noqa-nested.yml"),
-                        }
+                        },
                     ],
                     "__line__": 2,
                     "__file__": Path("examples/playbooks/noqa-nested.yml"),
-                }
+                },
             ],
             [
                 {
@@ -154,31 +157,31 @@ def test_playbook_noqa2(default_text_runner: RunFromText) -> None:
                                                 "msg": "Test unnamed task in block",
                                                 "__line__": 9,
                                                 "__file__": Path(
-                                                    "examples/playbooks/noqa-nested.yml"
+                                                    "examples/playbooks/noqa-nested.yml",
                                                 ),
                                             },
                                             "__line__": 8,
                                             "__file__": Path(
-                                                "examples/playbooks/noqa-nested.yml"
+                                                "examples/playbooks/noqa-nested.yml",
                                             ),
                                             SKIPPED_RULES_KEY: ["name[missing]"],
-                                        }
+                                        },
                                     ],
                                     "__line__": 6,
                                     "__file__": Path(
-                                        "examples/playbooks/noqa-nested.yml"
+                                        "examples/playbooks/noqa-nested.yml",
                                     ),
                                     SKIPPED_RULES_KEY: ["name[missing]"],
-                                }
+                                },
                             ],
                             "__line__": 4,
                             "__file__": Path("examples/playbooks/noqa-nested.yml"),
                             SKIPPED_RULES_KEY: ["name[missing]"],
-                        }
+                        },
                     ],
                     "__line__": 2,
                     "__file__": Path("examples/playbooks/noqa-nested.yml"),
-                }
+                },
             ],
         ),
     ),
@@ -206,19 +209,22 @@ def test_append_skipped_rules(
             {
                 "name": "Attempt and graceful roll back",
                 "block": [
-                    {"name": "Force a failure", "ansible.builtin.command": "/bin/false"}
+                    {
+                        "name": "Force a failure",
+                        "ansible.builtin.command": "/bin/false",
+                    },
                 ],
                 "rescue": [
                     {
                         "name": "Force a failure in middle of recovery!",
                         "ansible.builtin.command": "/bin/false",
-                    }
+                    },
                 ],
                 "always": [
                     {
                         "name": "Always do this",
                         "ansible.builtin.debug": {"msg": "This always executes"},
-                    }
+                    },
                 ],
             },
             True,
@@ -228,3 +234,19 @@ def test_append_skipped_rules(
 def test_is_nested_task(task: dict[str, Any], expected: bool) -> None:
     """Test is_nested_task() returns expected bool."""
     assert is_nested_task(task) == expected
+
+
+def test_capture_warning_outdated_tag(
+    default_rules_collection: RulesCollection,
+) -> None:
+    """Test that exclude paths do work."""
+    runner = Runner(
+        "examples/playbooks/capture-warning.yml",
+        rules=default_rules_collection,
+    )
+
+    matches = runner.run()
+    assert len(matches) == 1
+    assert matches[0].rule.id == "warning"
+    assert matches[0].tag == "warning[outdated-tag]"
+    assert matches[0].lineno == 8

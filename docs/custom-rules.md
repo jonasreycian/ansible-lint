@@ -58,6 +58,7 @@ from ansiblelint.rules import AnsibleLintRule
 
 if TYPE_CHECKING:
     from ansiblelint.file_utils import Lintable
+    from ansiblelint.utils import Task
 
 class TaskHasTag(AnsibleLintRule):
     """Tasks must have tag."""
@@ -66,7 +67,7 @@ class TaskHasTag(AnsibleLintRule):
     description = 'Tasks must have tag'
     tags = ['productivity']
 
-    def matchtask(self, task: Dict[str, Any], file: 'Lintable' | None = None) -> Union[bool,str]:
+    def matchtask(self, task: Task, file: 'Lintable' | None = None) -> Union[bool,str]:
         # If the task include another task or make the playbook fail
         # Don't force to have a tag
         if not set(task.keys()).isdisjoint(['include','fail']):
@@ -83,15 +84,6 @@ The task argument to `matchtask` contains a number of keys - the critical one is
 _action_. The value of `task['action']` contains the module being used, and the
 arguments passed, both as key-value pairs and a list of other arguments (e.g.
 the command used with shell).
-
-In ansible-lint 2.0.0, `task['action']['args']` was renamed
-`task['action']['module_arguments']` to avoid a clash when a module actually
-takes args as a parameter key (e.g. ec2_tag)
-
-In ansible-lint 3.0.0 `task['action']['module']` was renamed
-`task['action']['__ansible_module__']` to avoid a clash when a module take
-module as an argument. As a precaution, `task['action']['module_arguments']` was
-renamed `task['action']['__ansible_arguments__']`.
 
 ## Packaging custom rules
 

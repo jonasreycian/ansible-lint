@@ -21,12 +21,13 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from ansiblelint.rules import AnsibleLintRule
 
 if TYPE_CHECKING:
     from ansiblelint.file_utils import Lintable
+    from ansiblelint.utils import Task
 
 
 class PackageIsNotLatestRule(AnsibleLintRule):
@@ -41,7 +42,6 @@ class PackageIsNotLatestRule(AnsibleLintRule):
     version_added = "historic"
 
     _package_managers = [
-        # spell-checker: disable
         "apk",
         "apt",
         "bower",
@@ -68,11 +68,12 @@ class PackageIsNotLatestRule(AnsibleLintRule):
         "yarn",
         "yum",
         "zypper",
-        # spell-checker: enable
     ]
 
     def matchtask(
-        self, task: dict[str, Any], file: Lintable | None = None
+        self,
+        task: Task,
+        file: Lintable | None = None,
     ) -> bool | str:
         return (
             task["action"]["__ansible_module__"] in self._package_managers

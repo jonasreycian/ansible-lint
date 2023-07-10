@@ -5,11 +5,12 @@ import sys
 from typing import TYPE_CHECKING, Any
 
 from ansiblelint.constants import LINE_NUMBER_KEY
-from ansiblelint.errors import MatchError
 from ansiblelint.rules import AnsibleLintRule
 
 if TYPE_CHECKING:
+    from ansiblelint.errors import MatchError
     from ansiblelint.file_utils import Lintable
+    from ansiblelint.utils import Task
 
 
 class RunOnce(AnsibleLintRule):
@@ -21,6 +22,10 @@ class RunOnce(AnsibleLintRule):
 
     tags = ["idiom"]
     severity = "MEDIUM"
+    _ids = {
+        "run-once[task]": "Using run_once may behave differently if strategy is set to free.",
+        "run-once[play]": "Play uses strategy: free",
+    }
 
     def matchplay(self, file: Lintable, data: dict[str, Any]) -> list[MatchError]:
         """Return matches found for a specific playbook."""
@@ -39,12 +44,14 @@ class RunOnce(AnsibleLintRule):
                 filename=file,
                 tag=f"{self.id}[play]",
                 # pylint: disable=protected-access
-                linenumber=strategy._line_number,
-            )
+                lineno=strategy._line_number,  # noqa: SLF001
+            ),
         ]
 
     def matchtask(
-        self, task: dict[str, Any], file: Lintable | None = None
+        self,
+        task: Task,
+        file: Lintable | None = None,
     ) -> list[MatchError]:
         """Return matches for a task."""
         if not file or file.kind != "playbook":
@@ -58,8 +65,8 @@ class RunOnce(AnsibleLintRule):
                 message="Using run_once may behave differently if strategy is set to free.",
                 filename=file,
                 tag=f"{self.id}[task]",
-                linenumber=task[LINE_NUMBER_KEY],
-            )
+                lineno=task[LINE_NUMBER_KEY],
+            ),
         ]
 
 
@@ -78,7 +85,9 @@ if "pytest" in sys.modules:
         ),
     )
     def test_run_once(
-        default_rules_collection: RulesCollection, test_file: str, failure: int
+        default_rules_collection: RulesCollection,
+        test_file: str,
+        failure: int,
     ) -> None:
         """Test rule matches."""
         results = Runner(test_file, rules=default_rules_collection).run()

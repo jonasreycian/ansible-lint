@@ -7,6 +7,7 @@ from _pytest.capture import CaptureFixture
 
 from ansiblelint.rules import RulesCollection, filter_rules_with_profile
 from ansiblelint.rules.risky_shell_pipe import ShellWithoutPipefail
+from ansiblelint.text import strip_ansi_escape
 
 
 def test_profile_min() -> None:
@@ -43,5 +44,17 @@ def test_profile_listing(capfd: CaptureFixture[str]) -> None:
     # [WARNING]: Ansible is being run in a world writable directory
     # WSL2 has "WSL2" in platform name but WSL1 has "microsoft":
     platform_name = platform.platform().lower()
-    if all(word not in platform_name for word in ["wsl", "microsoft"]):
-        assert err == "", platform_name
+    err_lines = []
+    for line in strip_ansi_escape(err).splitlines():
+        if "SyntaxWarning:" in line:
+            continue
+        if (
+            "Skipped installing collection dependencies due to running in offline mode."
+            in line
+        ):
+            continue
+        err_lines.append(line)
+    if all(word not in platform_name for word in ["wsl", "microsoft"]) and err_lines:
+        assert (
+            not err_lines
+        ), f"Unexpected stderr output found while running on {platform_name} platform:\n{err_lines}"

@@ -1,4 +1,4 @@
-# (c) 2019–2020, Ansible by Red Hat
+# (c) 2019-2020, Ansible by Red Hat
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -24,8 +24,8 @@ from __future__ import annotations
 import collections.abc
 import logging
 import re
-from collections.abc import Generator, Sequence
-from functools import lru_cache
+import warnings
+from functools import cache
 from itertools import product
 from typing import TYPE_CHECKING, Any
 
@@ -42,10 +42,15 @@ from ansiblelint.constants import (
     RENAMED_TAGS,
     SKIPPED_RULES_KEY,
 )
-from ansiblelint.file_utils import Lintable
+from ansiblelint.errors import LintWarning, WarnSource
 
 if TYPE_CHECKING:
+    from collections.abc import Generator, Sequence
+
     from ansible.parsing.yaml.objects import AnsibleBaseYAMLObject
+
+    from ansiblelint.file_utils import Lintable
+
 
 _logger = logging.getLogger(__name__)
 _found_deprecated_tags: set[str] = set()
@@ -57,7 +62,11 @@ _noqa_comment_re = re.compile(r"^# noqa(\s|:)")
 # ansible.parsing.yaml.objects.AnsibleSequence
 
 
-def get_rule_skips_from_line(line: str) -> list[str]:
+def get_rule_skips_from_line(
+    line: str,
+    lintable: Lintable,
+    lineno: int = 1,
+) -> list[str]:
     """Return list of rule ids skipped via comment on the line of yaml."""
     _before_noqa, _noqa_marker, noqa_text = line.partition("# noqa")
 
@@ -66,10 +75,17 @@ def get_rule_skips_from_line(line: str) -> list[str]:
         if v in RENAMED_TAGS:
             tag = RENAMED_TAGS[v]
             if v not in _found_deprecated_tags:
-                _logger.warning(
-                    "Replaced outdated tag '%s' with '%s', replace it to avoid future regressions",
-                    v,
-                    tag,
+                msg = f"Replaced outdated tag '{v}' with '{tag}', replace it to avoid future errors"
+                warnings.warn(
+                    message=msg,
+                    category=LintWarning,
+                    source=WarnSource(
+                        filename=lintable,
+                        lineno=lineno,
+                        tag="warning[outdated-tag]",
+                        message=msg,
+                    ),
+                    stacklevel=0,
                 )
                 _found_deprecated_tags.add(v)
             v = tag
@@ -78,7 +94,8 @@ def get_rule_skips_from_line(line: str) -> list[str]:
 
 
 def append_skipped_rules(
-    pyyaml_data: AnsibleBaseYAMLObject, lintable: Lintable
+    pyyaml_data: AnsibleBaseYAMLObject,
+    lintable: Lintable,
 ) -> AnsibleBaseYAMLObject:
     """Append 'skipped_rules' to individual tasks or single metadata block.
 
@@ -96,7 +113,7 @@ def append_skipped_rules(
         yaml_skip = _append_skipped_rules(pyyaml_data, lintable)
     except RuntimeError:
         # Notify user of skip error, do not stop, do not change exit code
-        _logger.error("Error trying to append skipped rules", exc_info=True)
+        _logger.exception("Error trying to append skipped rules")
         return pyyaml_data
 
     if not yaml_skip:
@@ -105,7 +122,7 @@ def append_skipped_rules(
     return yaml_skip
 
 
-@lru_cache(maxsize=None)
+@cache
 def load_data(file_text: str) -> Any:
     """Parse ``file_text`` as yaml and return parsed structure.
 
@@ -124,15 +141,18 @@ def load_data(file_text: str) -> Any:
         return yaml.load_all(file_text)
 
 
-def _append_skipped_rules(  # noqa: max-complexity: 12
-    pyyaml_data: AnsibleBaseYAMLObject, lintable: Lintable
+def _append_skipped_rules(
+    pyyaml_data: AnsibleBaseYAMLObject,
+    lintable: Lintable,
 ) -> AnsibleBaseYAMLObject | None:
     # parse file text using 2nd parser library
     try:
         ruamel_data = load_data(lintable.content)
     except ScannerError as exc:
         _logger.debug(
-            "Ignored loading skipped rules from file %s due to: %s", lintable, exc
+            "Ignored loading skipped rules from file %s due to: %s",
+            lintable,
+            exc,
         )
         # For unparsable file types, we return empty skip lists
         return None
@@ -189,9 +209,11 @@ def _append_skipped_rules(  # noqa: max-complexity: 12
             continue
 
         if pyyaml_task.get("name") != ruamel_task.get("name"):
-            raise RuntimeError("Error in matching skip comment to a task")
+            msg = "Error in matching skip comment to a task"
+            raise RuntimeError(msg)
         pyyaml_task[SKIPPED_RULES_KEY] = _get_rule_skips_from_yaml(
-            ruamel_task, lintable
+            ruamel_task,
+            lintable,
         )
 
     return pyyaml_data
@@ -230,8 +252,9 @@ def _get_tasks_from_blocks(task_blocks: Sequence[Any]) -> Generator[Any, None, N
         yield task
 
 
-def _get_rule_skips_from_yaml(  # noqa: max-complexity: 12
-    yaml_input: Sequence[Any], lintable: Lintable
+def _get_rule_skips_from_yaml(
+    yaml_input: Sequence[Any],
+    lintable: Lintable,
 ) -> Sequence[Any]:
     """Traverse yaml for comments with rule skips and return list of rules."""
     yaml_comment_obj_strings = []
@@ -240,19 +263,22 @@ def _get_rule_skips_from_yaml(  # noqa: max-complexity: 12
         return []
 
     def traverse_yaml(obj: Any) -> None:
-        for _, entry in obj.ca.items.items():
+        for entry in obj.ca.items.values():
             for v in entry:
                 if isinstance(v, CommentToken):
                     comment_str = v.value
                     if _noqa_comment_re.match(comment_str):
                         line = v.start_mark.line + 1  # ruamel line numbers start at 0
-                        # column = v.start_mark.column + 1  # ruamel column numbers start at 0
                         lintable.line_skips[line].update(
-                            get_rule_skips_from_line(comment_str.strip())
+                            get_rule_skips_from_line(
+                                comment_str.strip(),
+                                lintable=lintable,
+                                lineno=line,
+                            ),
                         )
         yaml_comment_obj_strings.append(str(obj.ca.items))
         if isinstance(obj, dict):
-            for _, val in obj.items():
+            for val in obj.values():
                 if isinstance(val, (dict, list)):
                     traverse_yaml(val)
         elif isinstance(obj, list):
@@ -268,7 +294,7 @@ def _get_rule_skips_from_yaml(  # noqa: max-complexity: 12
     rule_id_list = []
     for comment_obj_str in yaml_comment_obj_strings:
         for line in comment_obj_str.split(r"\n"):
-            rule_id_list.extend(get_rule_skips_from_line(line))
+            rule_id_list.extend(get_rule_skips_from_line(line, lintable=lintable))
 
     return [normalize_tag(tag) for tag in rule_id_list]
 
@@ -287,8 +313,4 @@ def is_nested_task(task: dict[str, Any]) -> bool:
     if isinstance(task, str):
         return False
 
-    for key in NESTED_TASK_KEYS:
-        if task.get(key):
-            return True
-
-    return False
+    return any(task.get(key) for key in NESTED_TASK_KEYS)

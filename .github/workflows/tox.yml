@@ -2,23 +2,12 @@
 name: tox
 
 on:
-  create: # is used for publishing to PyPI and TestPyPI
-    tags: # any tag regardless of its name, no branches
-      - "**"
   push: # only publishes pushes to the main branch to TestPyPI
     branches: # any integration branch but not tag
       - "main"
   pull_request:
     branches:
       - "main"
-  release:
-    types:
-      - published # It seems that you can publish directly without creating
-  schedule:
-    - cron: 1 0 * * * # Run daily at 0:01 UTC
-  # Run every Friday at 18:02 UTC
-  # https://crontab.guru/#2_18_*_*_5
-  # - cron: 2 18 * * 5
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
@@ -43,16 +32,28 @@ jobs:
           max_python: "3.11"
           other_names: |
             lint
-            pkg,hook,docs
+            pkg
+            hook
+            docs
             schemas
             eco
             py-devel
           platforms: linux,macos
-
+  test-action:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Self test for ansible-lint@${{ github.action_ref || 'main' }}
+        uses: ./
+        with:
+          # basically we only lint linter own configuration, which should be passing.
+          args: .ansible-lint
   build:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os || 'ubuntu-22.04' }}
-    needs: pre
+    needs:
+      - pre
+      - test-action
     defaults:
       run:
         shell: ${{ matrix.shell || 'bash'}}
@@ -70,7 +71,7 @@ jobs:
       WSLENV: FORCE_COLOR:PYTEST_REQPASS:TOXENV:GITHUB_STEP_SUMMARY
       # Number of expected test passes, safety measure for accidental skip of
       # tests. Update value if you add/remove tests.
-      PYTEST_REQPASS: 800
+      PYTEST_REQPASS: 808
     steps:
       - name: Activate WSL1
         if: "contains(matrix.shell, 'wsl')"
@@ -95,14 +96,16 @@ jobs:
             ~/.cache/pre-commit
           key: pre-commit-${{ matrix.name || matrix.passed_name }}-${{ hashFiles('.pre-commit-config.yaml') }}
 
-      - name: Set galaxy cache
+      - name: Set ansible cache(s)
         uses: actions/cache@v3
-        if: ${{ startsWith(matrix.passed_name, 'py') }}
         with:
           path: |
-            examples/playbooks/collections/*.tar.gz
+            .cache/eco
             examples/playbooks/collections/ansible_collections
-          key: galaxy-${{ hashFiles('examples/playbooks/collections/requirements.yml') }}
+            ~/.cache/ansible-compat
+            ~/.ansible/collections
+            ~/.ansible/roles
+          key: ${{ matrix.name || matrix.passed_name }}-${{ hashFiles('tools/test-eco.sh', 'requirements.yml', 'examples/playbooks/collections/requirements.yml') }}
 
       - name: Set up Python ${{ matrix.python_version || '3.9' }}
         if: "!contains(matrix.shell, 'wsl')"
@@ -212,6 +215,7 @@ jobs:
 
     needs:
       - build
+      - test-action
 
     runs-on: ubuntu-latest
 

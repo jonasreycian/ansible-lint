@@ -11,9 +11,7 @@ extra_css:
   - stylesheets/extra.css
 
 theme:
-  name: "material"
-  logo: images/logo.svg
-  favicon: images/favicon.ico
+  name: ansible
   features:
     - content.code.copy
     - content.action.edit
@@ -23,21 +21,6 @@ theme:
     - navigation.indexes
     - navigation.tracking
     - toc.integrate
-  palette:
-    - media: "(prefers-color-scheme: light)"
-      primary: teal
-      accent: blue
-      scheme: default
-      toggle:
-        icon: material/brightness-7
-        name: Switch to dark mode
-    - media: "(prefers-color-scheme: dark)"
-      scheme: slate
-      primary: teal
-      accent: blue
-      toggle:
-        icon: material/brightness-4
-        name: Switch to light mode
 extra:
   social:
     - icon: fontawesome/brands/python
@@ -74,6 +57,7 @@ nav:
       - index: rules/index.md
       - rules/args.md
       - rules/avoid-implicit.md
+      - rules/complexity.md
       - rules/command-instead-of-module.md
       - rules/command-instead-of-shell.md
       - rules/deprecated-bare-vars.md
@@ -92,7 +76,6 @@ nav:
       - rules/load-failure.md
       - rules/loop-var-prefix.md
       - rules/meta-incorrect.md
-      - rules/meta-no-info.md
       - rules/meta-no-tags.md
       - rules/meta-runtime.md
       - rules/meta-video-links.md
@@ -116,6 +99,7 @@ nav:
       - rules/risky-shell-pipe.md
       - rules/role-name.md
       - rules/run-once.md
+      - rules/sanity.md
       - rules/schema.md
       - rules/syntax-check.md
       - rules/var-naming.md
@@ -125,27 +109,16 @@ nav:
       - Contributing: contributing.md
       - custom-rules.md
 
-#   - installation.md
-#   - using:
-#       - getting-started.md
-#       - usage.md
-#       - configuration.md
-#   - examples.md
-#   - faq.md
-#   - contributing.md
-#   - tags.md
-#   # - subprocess-tee: '!import https://github.com/pycontribs/subprocess-tee?branch=main&multi_docs=False'
-#   # - xxx: '!import https://github.com/eclipse-opensmartclide/smartclide-docs'
-
 plugins:
   - autorefs
   - markdown-exec
   - gen-files:
       scripts:
         - src/ansiblelint/generate_docs.py
-  - search
-  - social
-  - tags
+  - material/search:
+      separator: '[\s\-,:!=\[\]()"`/]+|\.(?!\d)|&[lg]t;|(?!\b)(?=[A-Z][a-z])'
+  - material/social
+  - material/tags
   # https://github.com/manuzhang/mkdocs-htmlproofer-plugin
   # - htmlproofer
   - mkdocstrings:
@@ -163,14 +136,14 @@ plugins:
               domains: [py, std]
 
 markdown_extensions:
+  - markdown_include.include:
+      base_path: docs
   - admonition
   - def_list
   - footnotes
   - pymdownx.highlight:
       anchor_linenums: true
   - pymdownx.inlinehilite
-  - pymdownx.snippets:
-      check_paths: true
   - pymdownx.superfences
   - pymdownx.magiclink:
       repo_url_shortener: true

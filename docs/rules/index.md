@@ -2,6 +2,7 @@
 
 - [args][]
 - [avoid-implicit][]
+- [complexity][]
 - [command-instead-of-module][]
 - [command-instead-of-shell][]
 - [deprecated-bare-vars][]
@@ -20,7 +21,6 @@
 - [load-failure][]
 - [loop-var-prefix][]
 - [meta-incorrect][]
-- [meta-no-info][]
 - [meta-no-tags][]
 - [meta-runtime][]
 - [meta-video-links][]

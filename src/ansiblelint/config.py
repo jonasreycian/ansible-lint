@@ -8,8 +8,9 @@ import sys
 import time
 import urllib.request
 import warnings
-from argparse import Namespace
+from dataclasses import dataclass, field
 from functools import lru_cache
+from importlib.metadata import PackageNotFoundError, distribution, version
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -29,6 +30,7 @@ CACHE_DIR = (
 DEFAULT_WARN_LIST = [
     "experimental",
     "jinja[spacing]",  # warning until we resolve all reported false-positives
+    "fqcn[deep]",  # 2023-05-31 added
 ]
 
 DEFAULT_KINDS = [
@@ -46,20 +48,20 @@ DEFAULT_KINDS = [
     # https://docs.ansible.com/ansible/latest/dev_guide/collections_galaxy_meta.html
     {"galaxy": "**/galaxy.yml"},  # Galaxy collection meta
     {"reno": "**/releasenotes/*/*.{yaml,yml}"},  # reno release notes
+    {"vars": "**/{host_vars,group_vars,vars,defaults}/**/*.{yaml,yml}"},
     {"tasks": "**/tasks/**/*.{yaml,yml}"},
     {"rulebook": "**/rulebooks/*.{yml,yaml"},
     {"playbook": "**/playbooks/*.{yml,yaml}"},
     {"playbook": "**/*playbook*.{yml,yaml}"},
     {"role": "**/roles/*/"},
     {"handlers": "**/handlers/*.{yaml,yml}"},
-    {"vars": "**/{host_vars,group_vars,vars,defaults}/**/*.{yaml,yml}"},
     {"test-meta": "**/tests/integration/targets/*/meta/main.{yaml,yml}"},
     {"meta": "**/meta/main.{yaml,yml}"},
     {"meta-runtime": "**/meta/runtime.{yaml,yml}"},
-    {"arg_specs": "**/meta/argument_specs.{yaml,yml}"},  # role argument specs
+    {"role-arg-spec": "**/meta/argument_specs.{yaml,yml}"},  # role argument specs
     {"yaml": ".config/molecule/config.{yaml,yml}"},  # molecule global config
     {
-        "requirements": "**/molecule/*/{collections,requirements}.{yaml,yml}"
+        "requirements": "**/molecule/*/{collections,requirements}.{yaml,yml}",
     },  # molecule old collection requirements (v1), ansible 2.8 only
     {"yaml": "**/molecule/*/{base,molecule}.{yaml,yml}"},  # molecule config
     {"requirements": "**/requirements.{yaml,yml}"},  # v2 and v1
@@ -69,6 +71,11 @@ DEFAULT_KINDS = [
     {"yaml": "**/*.{yaml,yml}"},
     {"yaml": "**/.*.{yaml,yml}"},
     {"sanity-ignore-file": "**/tests/sanity/ignore-*.txt"},
+    # what are these doc_fragments? We also ignore module_utils for now
+    {
+        "plugin": "**/plugins/{action,become,cache,callback,connection,filter,inventory,lookup,modules,test}/**/*.py",
+    },
+    {"python": "**/*.py"},
 ]
 
 BASE_KINDS = [
@@ -76,7 +83,7 @@ BASE_KINDS = [
     # MIME/IANA model. Their purpose is to be able to process a file based on
     # it type, including generic processing of text files using the prefix.
     {
-        "text/jinja2": "**/*.j2"
+        "text/jinja2": "**/*.j2",
     },  # jinja2 templates are not always parsable as something else
     {"text/jinja2": "**/*.j2.*"},
     {"text": "**/templates/**/*.*"},  # templates are likely not validable
@@ -88,50 +95,67 @@ BASE_KINDS = [
     {"text/yaml": "**/{.ansible-lint,.yamllint}"},
     {"text/yaml": "**/*.{yaml,yml}"},
     {"text/yaml": "**/.*.{yaml,yml}"},
+    {"text/python": "**/*.py"},
 ]
 
 PROFILES = yaml_from_file(Path(__file__).parent / "data" / "profiles.yml")
 
 LOOP_VAR_PREFIX = "^(__|{role}_)"
 
-options = Namespace(
-    cache_dir=None,
-    colored=True,
-    configured=False,
-    cwd=".",
-    display_relative_path=True,
-    exclude_paths=[],
-    format="brief",
-    lintables=[],
-    list_rules=False,
-    list_tags=False,
-    write_list=[],
-    parseable=False,
-    quiet=False,
-    rulesdirs=[],
-    skip_list=[],
-    tags=[],
-    verbosity=False,
-    warn_list=[],
-    kinds=DEFAULT_KINDS,
-    mock_filters=[],
-    mock_modules=[],
-    mock_roles=[],
-    loop_var_prefix=None,
-    only_builtins_allow_collections=[],
-    only_builtins_allow_modules=[],
-    var_naming_pattern=None,
-    offline=False,
-    project_dir=".",  # default should be valid folder (do not use None here)
-    extra_vars=None,
-    enable_list=[],
-    skip_action_validation=True,
-    strict=False,
-    rules={},  # Placeholder to set and keep configurations for each rule.
-    profile=None,
-    task_name_prefix="{stem} | ",
-    sarif_file=None,
-)
+
+@dataclass
+class Options:  # pylint: disable=too-many-instance-attributes,too-few-public-methods
+    """Store ansible-lint effective configuration options."""
+
+    cache_dir: Path | None = None
+    colored: bool = True
+    configured: bool = False
+    cwd: Path = Path(".")
+    display_relative_path: bool = True
+    exclude_paths: list[str] = field(default_factory=list)
+    format: str = "brief"  # noqa: A003
+    lintables: list[str] = field(default_factory=list)
+    list_rules: bool = False
+    list_tags: bool = False
+    write_list: list[str] = field(default_factory=list)
+    parseable: bool = False
+    quiet: bool = False
+    rulesdirs: list[Path] = field(default_factory=list)
+    skip_list: list[str] = field(default_factory=list)
+    tags: list[str] = field(default_factory=list)
+    verbosity: int = 0
+    warn_list: list[str] = field(default_factory=list)
+    kinds = DEFAULT_KINDS
+    mock_filters: list[str] = field(default_factory=list)
+    mock_modules: list[str] = field(default_factory=list)
+    mock_roles: list[str] = field(default_factory=list)
+    loop_var_prefix: str | None = None
+    only_builtins_allow_collections: list[str] = field(default_factory=list)
+    only_builtins_allow_modules: list[str] = field(default_factory=list)
+    var_naming_pattern: str | None = None
+    offline: bool = False
+    project_dir: str = "."  # default should be valid folder (do not use None here)
+    extra_vars: dict[str, Any] | None = None
+    enable_list: list[str] = field(default_factory=list)
+    skip_action_validation: bool = True
+    strict: bool = False
+    rules: dict[str, Any] = field(
+        default_factory=dict,
+    )  # Placeholder to set and keep configurations for each rule.
+    profile: str | None = None
+    task_name_prefix: str = "{stem} | "
+    sarif_file: Path | None = None
+    config_file: str | None = None
+    generate_ignore: bool = False
+    rulesdir: list[Path] = field(default_factory=list)
+    use_default_rules: bool = False
+    version: bool = False  # display version command
+    list_profiles: bool = False  # display profiles command
+    ignore_file: Path | None = None
+    max_tasks: int = 100
+
+
+options = Options()
 
 # Used to store detected tag deprecations
 used_old_tags: dict[str, str] = {}
@@ -139,12 +163,16 @@ used_old_tags: dict[str, str] = {}
 # Used to store collection list paths (with mock paths if needed)
 collection_list: list[str] = []
 
+# Used to store log messages before logging is initialized (level, message)
+log_entries: list[tuple[int, str]] = []
+
 
 def get_rule_config(rule_id: str) -> dict[str, Any]:
     """Get configurations for the rule ``rule_id``."""
     rule_config = options.rules.get(rule_id, {})
     if not isinstance(rule_config, dict):  # pragma: no branch
-        raise RuntimeError(f"Invalid rule config for {rule_id}: {rule_config}")
+        msg = f"Invalid rule config for {rule_id}: {rule_config}"
+        raise RuntimeError(msg)
     return rule_config
 
 
@@ -173,13 +201,21 @@ def in_venv() -> bool:
 def guess_install_method() -> str:
     """Guess if pip upgrade command should be used."""
     package_name = "ansible-lint"
+
+    try:
+        if (distribution(package_name).read_text("INSTALLER") or "").strip() != "pip":
+            return ""
+    except PackageNotFoundError as exc:
+        logging.debug(exc)
+        return ""
+
     pip = ""
     if in_venv():
         _logger.debug("Found virtualenv, assuming `pip3 install` will work.")
         pip = f"pip install --upgrade {package_name}"
     elif __file__.startswith(os.path.expanduser("~/.local/lib")):
         _logger.debug(
-            "Found --user installation, assuming `pip3 install --user` will work."
+            "Found --user installation, assuming `pip3 install --user` will work.",
         )
         pip = f"pip3 install --user --upgrade {package_name}"
 
@@ -207,13 +243,26 @@ def guess_install_method() -> str:
                 logging.debug("Skipping %s as it is not installed.", package_name)
                 use_pip = False
     # pylint: disable=broad-except
-    except Exception as exc:
+    except (AttributeError, ModuleNotFoundError) as exc:
         # On Fedora 36, we got a AttributeError exception from pip that we want to avoid
+        # On NixOS, we got a ModuleNotFoundError exception from pip that we want to avoid
         logging.debug(exc)
         use_pip = False
 
     # We only want to recommend pip for upgrade if it looks safe to do so.
     return pip if use_pip else ""
+
+
+def get_deps_versions() -> dict[str, Version | None]:
+    """Return versions of most important dependencies."""
+    result: dict[str, Version | None] = {}
+
+    for name in ["ansible-core", "ansible-compat", "ruamel-yaml", "ruamel-yaml-clib"]:
+        try:
+            result[name] = Version(version(name))
+        except PackageNotFoundError:
+            result[name] = None
+    return result
 
 
 def get_version_warning() -> str:
@@ -242,13 +291,15 @@ def get_version_warning() -> str:
             "https://api.github.com/repos/ansible/ansible-lint/releases/latest"
         )
         try:
-            with urllib.request.urlopen(release_url) as url:
+            with urllib.request.urlopen(release_url) as url:  # noqa: S310
                 data = json.load(url)
                 with open(cache_file, "w", encoding="utf-8") as f:
                     json.dump(data, f)
         except (URLError, HTTPError) as exc:  # pragma: no cover
             _logger.debug(
-                "Unable to fetch latest version from %s due to: %s", release_url, exc
+                "Unable to fetch latest version from %s due to: %s",
+                release_url,
+                exc,
             )
             return ""
 

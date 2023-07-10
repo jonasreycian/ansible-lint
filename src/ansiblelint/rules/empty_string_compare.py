@@ -6,13 +6,14 @@ from __future__ import annotations
 
 import re
 import sys
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from ansiblelint.rules import AnsibleLintRule
 from ansiblelint.yaml_utils import nested_items_path
 
 if TYPE_CHECKING:
     from ansiblelint.file_utils import Lintable
+    from ansiblelint.utils import Task
 
 
 class ComparisonToEmptyStringRule(AnsibleLintRule):
@@ -30,7 +31,9 @@ class ComparisonToEmptyStringRule(AnsibleLintRule):
     empty_string_compare = re.compile("[=!]= ?(\"{2}|'{2})")
 
     def matchtask(
-        self, task: dict[str, Any], file: Lintable | None = None
+        self,
+        task: Task,
+        file: Lintable | None = None,
     ) -> bool | str:
         for k, v, _ in nested_items_path(task):
             if k == "when":
@@ -42,7 +45,7 @@ class ComparisonToEmptyStringRule(AnsibleLintRule):
                 else:
                     for item in v:
                         if isinstance(item, str) and self.empty_string_compare.search(
-                            item
+                            item,
                         ):
                             return True
 
@@ -59,7 +62,8 @@ if "pytest" in sys.modules:
         rules = RulesCollection()
         rules.register(ComparisonToEmptyStringRule())
         results = Runner(
-            "examples/playbooks/rule-empty-string-compare-fail.yml", rules=rules
+            "examples/playbooks/rule-empty-string-compare-fail.yml",
+            rules=rules,
         ).run()
         assert len(results) == 3
         for result in results:
@@ -70,6 +74,7 @@ if "pytest" in sys.modules:
         rules = RulesCollection()
         rules.register(ComparisonToEmptyStringRule())
         results = Runner(
-            "examples/playbooks/rule-empty-string-compare-pass.yml", rules=rules
+            "examples/playbooks/rule-empty-string-compare-pass.yml",
+            rules=rules,
         ).run()
         assert len(results) == 0, results

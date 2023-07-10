@@ -1,12 +1,13 @@
 """Example implementation of a rule requiring tasks to have tags set."""
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from ansiblelint.rules import AnsibleLintRule
 
 if TYPE_CHECKING:
     from ansiblelint.file_utils import Lintable
+    from ansiblelint.utils import Task
 
 
 class TaskHasTag(AnsibleLintRule):
@@ -17,7 +18,9 @@ class TaskHasTag(AnsibleLintRule):
     tags = ["productivity", "tags"]
 
     def matchtask(
-        self, task: dict[str, Any], file: Lintable | None = None
+        self,
+        task: Task,
+        file: Lintable | None = None,
     ) -> bool | str:
         """Task matching method."""
         if isinstance(task, str):

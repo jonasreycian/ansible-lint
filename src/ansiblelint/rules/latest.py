@@ -1,13 +1,14 @@
 """Implementation of latest rule."""
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
-from ansiblelint.errors import MatchError
 from ansiblelint.rules import AnsibleLintRule
 
 if TYPE_CHECKING:
+    from ansiblelint.errors import MatchError
     from ansiblelint.file_utils import Lintable
+    from ansiblelint.utils import Task
 
 
 class LatestRule(AnsibleLintRule):
@@ -21,9 +22,15 @@ class LatestRule(AnsibleLintRule):
     severity = "MEDIUM"
     tags = ["idempotency"]
     version_added = "v6.5.2"
+    _ids = {
+        "latest[git]": "Use a commit hash or tag instead of 'latest' for git",
+        "latest[hg]": "Use a commit hash or tag instead of 'latest' for hg",
+    }
 
     def matchtask(
-        self, task: dict[str, Any], file: Lintable | None = None
+        self,
+        task: Task,
+        file: Lintable | None = None,
     ) -> bool | str | MatchError:
         """Check if module args are safe."""
         if (

@@ -41,26 +41,33 @@
       "type": "object"
     },
     "become_method": {
-      "markdownDescription": "See [become](https://docs.ansible.com/ansible/latest/user_guide/become.html)",
-      "oneOf": [
+      "anyOf": [
         {
           "enum": [
-            "sudo",
-            "su",
-            "pbrun",
-            "pfexec",
-            "runas",
-            "dzdo",
-            "ksu",
-            "doas",
-            "machinectl"
+            "ansible.builtin.sudo",
+            "ansible.builtin.su",
+            "community.general.pbrun",
+            "community.general.pfexec",
+            "ansible.builtin.runas",
+            "community.general.dzdo",
+            "community.general.ksu",
+            "community.general.doas",
+            "community.general.machinectl",
+            "community.general.pmrun",
+            "community.general.sesu",
+            "community.general.sudosu"
           ],
           "type": "string"
         },
         {
           "$ref": "#/$defs/full-jinja"
+        },
+        {
+          "pattern": "[A-Za-z0-9_\\.]+",
+          "type": "string"
         }
       ],
+      "markdownDescription": "See [become](https://docs.ansible.com/ansible/latest/user_guide/become.html)",
       "title": "Become Method"
     },
     "block": {
@@ -80,8 +87,8 @@
           "type": "array"
         },
         "any_errors_fatal": {
-          "title": "Any Errors Fatal",
-          "type": "boolean"
+          "$ref": "#/$defs/templated-boolean",
+          "title": "Any Errors Fatal"
         },
         "become": {
           "$ref": "#/$defs/templated-boolean",
@@ -284,8 +291,8 @@
       ],
       "properties": {
         "any_errors_fatal": {
-          "title": "Any Errors Fatal",
-          "type": "boolean"
+          "$ref": "#/$defs/templated-boolean",
+          "title": "Any Errors Fatal"
         },
         "become": {
           "$ref": "#/$defs/templated-boolean",
@@ -341,8 +348,8 @@
           "type": "boolean"
         },
         "gather_facts": {
-          "title": "Gather Facts",
-          "type": "boolean"
+          "$ref": "#/$defs/templated-boolean",
+          "title": "Gather Facts"
         },
         "gather_subset": {
           "items": {
@@ -620,7 +627,17 @@
         },
         "vars_files": {
           "items": {
-            "type": "string"
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            ]
           },
           "title": "Vars Files",
           "type": ["array", "string", "null"]
@@ -646,8 +663,8 @@
       "markdownDescription": "See [roles](https://docs.ansible.com/ansible/latest/user_guide/playbooks_reuse_roles.html#roles)",
       "properties": {
         "any_errors_fatal": {
-          "title": "Any Errors Fatal",
-          "type": "boolean"
+          "$ref": "#/$defs/templated-boolean",
+          "title": "Any Errors Fatal"
         },
         "become": {
           "$ref": "#/$defs/templated-boolean",
@@ -815,8 +832,8 @@
           "type": "string"
         },
         "any_errors_fatal": {
-          "title": "Any Errors Fatal",
-          "type": "boolean"
+          "$ref": "#/$defs/templated-boolean",
+          "title": "Any Errors Fatal"
         },
         "args": {
           "$ref": "#/$defs/templated-object",
@@ -1176,7 +1193,7 @@
       "type": "object"
     }
   },
-  "$id": "https://raw.githubusercontent.com/ansible/ansiblelint/main/ansiblelint/schemas/ansible.json",
+  "$id": "https://raw.githubusercontent.com/ansible/ansible-lint/main/src/ansiblelint/schemas/ansible.json",
   "$schema": "http://json-schema.org/draft-07/schema",
   "additionalProperties": false,
   "examples": [],

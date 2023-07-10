@@ -10,8 +10,6 @@ from ansiblelint.rules import AnsibleLintRule
 
 
 if TYPE_CHECKING:
-    from typing import Any
-
     from ansiblelint.errors import MatchError
     from ansiblelint.file_utils import Lintable
 
@@ -24,7 +22,7 @@ class CheckSanityIgnoreFiles(AnsibleLintRule):
         "Identifies non-allowed entries in the `tests/sanity/ignore*.txt files."
     )
     severity = "MEDIUM"
-    tags = ["experimental"]
+    tags = ["idiom"]
     version_added = "v6.14.0"
 
     # Partner Engineering defines this list. Please contact PE for changes.
@@ -50,6 +48,10 @@ class CheckSanityIgnoreFiles(AnsibleLintRule):
         "compile-3.5",
         "compile-3.5!skip",
     ]
+    _ids = {
+        "sanity[cannot-ignore]": "Ignore file contains ... at line ..., which is not a permitted ignore.",
+        "sanity[bad-ignore]": "Ignore file entry at ... is formatted incorrectly. Please review.",
+    }
 
     def matchyaml(self, file: Lintable) -> list[MatchError]:
         """Evaluate sanity ignore lists for disallowed ignores.
@@ -63,7 +65,7 @@ class CheckSanityIgnoreFiles(AnsibleLintRule):
         if file.kind != "sanity-ignore-file":
             return []
 
-        with open(file.abspath, encoding="utf-8") as ignore_file:
+        with file.path.open(encoding="utf-8") as ignore_file:
             entries = ignore_file.read().splitlines()
 
             ignores = self.allowed_ignores_all
@@ -83,9 +85,9 @@ class CheckSanityIgnoreFiles(AnsibleLintRule):
                                 self.create_matcherror(
                                     message=f"Ignore file contains {test} at line {line_num}, which is not a permitted ignore.",
                                     tag="sanity[cannot-ignore]",
-                                    linenumber=line_num,
+                                    lineno=line_num,
                                     filename=file,
-                                )
+                                ),
                             )
 
                     except ValueError:
@@ -93,9 +95,9 @@ class CheckSanityIgnoreFiles(AnsibleLintRule):
                             self.create_matcherror(
                                 message=f"Ignore file entry at {line_num} is formatted incorrectly. Please review.",
                                 tag="sanity[bad-ignore]",
-                                linenumber=line_num,
+                                lineno=line_num,
                                 filename=file,
-                            )
+                            ),
                         )
 
         return results
